@@ -1,0 +1,20 @@
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+
+# Generated PostgreSQL data, dumps, and logs
+pgdata/
+postgres-data/
+*.backup
+*.dump
+*.log
+.tmp_pg_*/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
