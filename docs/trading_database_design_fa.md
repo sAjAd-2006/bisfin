@@ -3,7 +3,7 @@
 - نسخه سند: ۱.۰
 - پروفایل اجرایی مرجع: PostgreSQL 16+
 - قرارداد زمانی: UTC در پایگاه داده، منطقه زمانی بازار فقط در Metadata
-DDL مرجع: `db/postgresql/001_core_schema.sql` و `db/postgresql/003_technical_backtest_completion.sql`
+DDL مرجع: `db/postgresql/migrations/0001_core_schema.sql` و `db/postgresql/migrations/0002_technical_backtest_completion.sql`
 
 > فاز اجرایی فعلی فقط تکمیل بک‌تست تکنیکال است. Schemaهای ML/DL موجود حفظ شده‌اند، اما تا فاز بعدی توسعه یا بهینه‌سازی نمی‌شوند.
 
@@ -188,7 +188,7 @@ erDiagram
 
 ## ۳. تعریف Schema و Data Dictionary
 
-DDL اجرایی و Commentهای ستونی در `db/postgresql/001_core_schema.sql` مرجع نهایی هستند. شش Schema استفاده می‌شود:
+DDL اجرایی و Commentهای ستونی در `db/postgresql/migrations/0001_core_schema.sql` مرجع نهایی هستند. شش Schema استفاده می‌شود:
 
 فرهنگ کامل ستون‌ها، نوع، Nullable بودن و معنای هر جدول در `docs/schema_dictionary_fa.md` قرار دارد؛ این بخش خلاصه مسئولیت و روابط را ارائه می‌کند.
 
@@ -640,11 +640,11 @@ WHERE dv.dataset_version_id = :dataset_version_id
 
 ### اعتبارسنجی تحویل حاضر
 
-- `001_core_schema.sql` از صفر روی PostgreSQL 18.3 اجرا شد.
+- `db/postgresql/migrations/0001_core_schema.sql` از صفر روی PostgreSQL 18.3 اجرا شد.
 - همان Migration بار دوم بدون خطا اجرا شد (Idempotency smoke test).
-- `002_smoke_test.sql` سه Query اصلی را `PREPARE/EXPLAIN` کرد و Helper ماهانه Range→چهار Hash Leaf را داخل Transaction ساخت؛ سپس کل تست Rollback شد.
-- `003_technical_backtest_completion.sql` از صفر و بار دوم بدون خطا اجرا شد و بخش‌های ML/DL را تغییر نداد.
-- `004_technical_backtest_smoke_test.sql` ورود Quote و حقیقی/حقوقی، Snapshot Frozen، جلوگیری واقعی از Look-ahead، زنجیره Decision→Signal→Order→Fill، Lineage اجرای Typed، Position Ledger و Valuation Revision را در Transaction آزمایش و Rollback کرد.
+- `db/postgresql/tests/0001_core_smoke.sql` سه Query اصلی را `PREPARE/EXPLAIN` کرد و Helper ماهانه Range→چهار Hash Leaf را داخل Transaction ساخت؛ سپس کل تست Rollback شد.
+- `db/postgresql/migrations/0002_technical_backtest_completion.sql` از صفر و بار دوم بدون خطا اجرا شد و بخش‌های ML/DL را تغییر نداد.
+- `db/postgresql/tests/0002_technical_backtest_smoke.sql` ورود Quote و حقیقی/حقوقی، Snapshot Frozen، جلوگیری واقعی از Look-ahead، زنجیره Decision→Signal→Order→Fill، Lineage اجرای Typed، Position Ledger و Valuation Revision را در Transaction آزمایش و Rollback کرد.
 - Catalog نهایی شامل ۷۲ جدول منطقی/پارتیشن‌شده، ۱۹۲ ایندکس صریح و ضمنی، ۱۵۸ Foreign Key، ۲۴۳ Check Constraint و ۶ Trigger کاربردی بود.
 - شمار `invalid_indexes` و `unvalidated_constraints` هر دو صفر بود.
 - Cluster و پوشه آزمایشی موقت پس از پایان اعتبارسنجی متوقف و حذف شدند.

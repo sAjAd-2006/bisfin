@@ -1,27 +1,35 @@
 # Bisfin Database
 
-Bisfin currently provides a PostgreSQL-first database foundation for
-reproducible **technical-strategy backtesting**. The current implementation
-covers versioned market data, point-in-time replay, strategy runs, simulated
-execution, accounting, and performance reporting.
+Bisfin currently provides a PostgreSQL-first foundation for reproducible
+technical-strategy backtesting. It covers versioned market data,
+point-in-time replay, strategy runs, simulated execution, accounting, and
+performance reporting.
 
-ML/DL application and pipeline work is deferred. Existing reserved ML schema
-objects are not extended by this infrastructure change. Python application
-code, Alembic, TimescaleDB, and PostgreSQL extensions are intentionally out of
-scope.
+The Python 3.12 code in this repository is limited to migration
+infrastructure: Alembic executes the existing raw SQL and a small registry
+verifies its identity. There is no Python application or SQLAlchemy domain
+model. ML/DL pipelines remain deferred, and no PostgreSQL extension is
+required.
 
 ## Repository structure
 
 ```text
 .
-|-- .github/workflows/database-ci.yml  # PostgreSQL 16 CI
-|-- db/postgresql/                     # Existing migrations and smoke tests
-|-- docs/                              # Architecture and schema documentation
-|-- refrences/                         # Local database-design reference notes
-|-- scripts/db/                        # Non-interactive database automation
-|-- .env.example                       # Safe local development defaults
-|-- docker-compose.yml                 # Local PostgreSQL 16 service
-`-- Makefile                           # Developer database commands
+|-- .github/workflows/database-ci.yml     # PostgreSQL 16 and Python CI
+|-- alembic/                              # Alembic environment and revisions
+|-- db/postgresql/
+|   |-- migrations/                       # Immutable, registered raw SQL
+|   `-- tests/                            # Raw SQL smoke tests
+|-- docs/                                 # Architecture and schema docs
+|-- scripts/db/                           # Database automation and checks
+|-- tests/                                # Python migration-registry tests
+|-- .env.example                          # Safe local defaults
+|-- alembic.ini                           # Alembic configuration
+|-- docker-compose.yml                    # Local PostgreSQL 16 service
+|-- migration_registry.py                 # Ordered checksums and DB URL config
+|-- pyproject.toml                         # Python 3.12 project configuration
+|-- uv.lock                               # Reproducible Python dependency lock
+`-- Makefile                              # Developer commands
 ```
 
 ## Prerequisites
@@ -29,95 +37,137 @@ scope.
 - Docker Engine or Docker Desktop with Docker Compose v2
 - GNU Make
 - Bash
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/)
 
-No host installation of PostgreSQL or `psql` is required; all SQL commands use
-the client included in the PostgreSQL 16 container.
+No host installation of PostgreSQL or `psql` is required. Raw SQL tests use
+the PostgreSQL 16 container. Alembic uses synchronous `psycopg` from the uv
+environment and connects to the container through its localhost port.
 
-On Windows, run the commands from WSL or Git Bash with GNU Make available.
-PowerShell users can create the environment file with
-`Copy-Item .env.example .env` instead of `cp`.
+On Windows, use WSL or Git Bash with GNU Make available. PowerShell users can
+create the environment file with `Copy-Item .env.example .env` instead of
+`cp`.
 
 ## Local setup
 
-Create the ignored local environment file, start PostgreSQL, wait for it, and
-apply the migrations:
+Create the ignored development environment, synchronize the locked Python
+environment, start PostgreSQL, and migrate the empty database:
 
 ```bash
 cp .env.example .env
+uv sync --locked --dev
 make db-up
 make db-wait
 make db-migrate
 ```
 
-The values in `.env.example` are development-only defaults. Override them in
-the untracked `.env` file; never put production credentials in this repository.
-The database is exposed only on `127.0.0.1` at `POSTGRES_PORT`.
+The values in `.env.example` are development-only. Override them in the
+untracked `.env`; never commit production credentials. PostgreSQL is exposed
+only on `127.0.0.1` at `POSTGRES_PORT`.
 
-## Database tests
+Alembic uses `DATABASE_URL` when it is present. Otherwise it constructs a
+synchronous `postgresql+psycopg` URL for `localhost` from `POSTGRES_DB`,
+`POSTGRES_USER`, `POSTGRES_PASSWORD`, and `POSTGRES_PORT`.
 
-After migrations have been applied, run the idempotency checks and both smoke
+## Migration commands
+
+```bash
+make db-migrate
+make migration-current
+make migration-history
+make migration-check
+```
+
+`db-migrate` waits for PostgreSQL and runs `uv run alembic upgrade head`.
+Running it again at head is a no-op. `migration-current` reports the database
+revision and its head marker, `migration-history` displays the revision chain,
+and `migration-check` rejects an unknown/non-head database revision,
+a registry/Alembic graph mismatch, a missing SQL file, or a checksum change.
+
+Downgrades are intentionally unsupported because the existing schema has no
+safe destructive rollback. Corrections must be introduced as forward
+migrations.
+
+## Database and Python tests
+
+After migration, re-execute the idempotent raw migrations and both smoke
 tests:
 
 ```bash
 make db-test
 ```
 
-The test target executes, in order:
+The raw sequence is:
 
-1. `001_core_schema.sql` again (idempotency)
-2. `003_technical_backtest_completion.sql` again (idempotency)
-3. `002_smoke_test.sql`
-4. `004_technical_backtest_smoke_test.sql`
+1. `db/postgresql/migrations/0001_core_schema.sql` again
+2. `db/postgresql/migrations/0002_technical_backtest_completion.sql` again
+3. `db/postgresql/tests/0001_core_smoke.sql`
+4. `db/postgresql/tests/0002_technical_backtest_smoke.sql`
 
-Both smoke-test files run inside transactions and roll back their fixtures.
-Every `psql` invocation uses `ON_ERROR_STOP=1`, so the command fails on the
-first SQL error.
+The smoke tests manage their own transactions and roll back their fixtures.
+Every `psql` invocation uses `ON_ERROR_STOP=1`, so it fails on the first SQL
+error.
 
-To recreate the development database from an empty database and run the full
-migration and test sequence:
+Run Python validation independently with:
+
+```bash
+make python-lint
+make python-test
+```
+
+To drop and recreate only the configured development database, then run
+Alembic and all raw database tests again:
 
 ```bash
 make db-reset
 ```
 
-`db-reset` protects the `postgres`, `template0`, and `template1` databases from
-accidental deletion.
+`db-reset` refuses to delete `postgres`, `template0`, or `template1`.
 
 ## Make targets
 
 | Target | Purpose |
 | --- | --- |
-| `make db-up` | Start the PostgreSQL 16 service. |
-| `make db-down` | Stop the stack while preserving the named data volume. |
-| `make db-logs` | Follow the latest PostgreSQL logs. |
-| `make db-wait` | Wait for an authenticated database query to succeed. |
-| `make db-migrate` | Apply the two migrations in canonical order. |
-| `make db-test` | Reapply migrations and execute both smoke tests. |
-| `make db-reset` | Drop/recreate the development DB, migrate, and test it. |
-| `make db-shell` | Open an interactive `psql` session in the container. |
+| `make db-up` | Start PostgreSQL 16. |
+| `make db-down` | Stop the stack while preserving its named volume. |
+| `make db-logs` | Follow recent PostgreSQL logs. |
+| `make db-wait` | Wait for an authenticated query to succeed. |
+| `make db-migrate` | Upgrade the database to Alembic head. |
+| `make db-test` | Reapply raw migrations and run both smoke tests. |
+| `make db-reset` | Recreate the development DB, migrate, and test it. |
+| `make db-shell` | Open an interactive containerized `psql`. |
+| `make migration-current` | Verify/report the current Alembic head. |
+| `make migration-history` | Show ordered Alembic history. |
+| `make migration-check` | Validate DB state, registry, files, and checksums. |
+| `make python-lint` | Run Ruff and mypy. |
+| `make python-test` | Run pytest. |
 
-Typical operational commands:
+## Raw SQL order and safety model
 
-```bash
-make db-shell
-make db-logs
-make db-down
-```
+The authoritative schema remains raw SQL; Alembic revisions do not reproduce
+tables, functions, triggers, constraints, indexes, views, or seed data with
+SQLAlchemy metadata. The only production/development order is:
 
-## SQL execution order
+1. Alembic revision `0001` -> `db/postgresql/migrations/0001_core_schema.sql`
+2. Alembic revision `0002` -> `db/postgresql/migrations/0002_technical_backtest_completion.sql`
 
-Production/development migrations use only this order:
+Before execution, the registry verifies the file exists and that its SHA-256
+matches the recorded value. A session-level PostgreSQL advisory lock prevents
+two migration runners from applying the chain concurrently. SQL is executed
+as one batch so a PostgreSQL error stops the revision immediately.
 
-1. `db/postgresql/001_core_schema.sql`
-2. `db/postgresql/003_technical_backtest_completion.sql`
+Each inherited migration owns its existing `BEGIN`/`COMMIT`, which is
+deliberately preserved byte-for-byte. Consequently, there is a narrow crash
+window after that inner `COMMIT` and before Alembic records the new revision.
+If this occurs, investigate the database state and rerun the idempotent
+migration; do not bypass checksum validation or blindly stamp a revision.
 
-Files `002` and `004` are tests, not migrations. See
-[db/postgresql/README.md](db/postgresql/README.md) for the role of every SQL
-file.
+See [db/postgresql/README.md](db/postgresql/README.md) for every SQL artifact.
 
 ## Continuous integration
 
-GitHub Actions uses the same Compose service, Make targets, and shell scripts
-as local development. On every push and pull request it creates an empty
-PostgreSQL 16 state, applies migrations, reapplies them for idempotency, and
-runs both smoke tests.
+GitHub Actions runs on Ubuntu 24.04 for every push and pull request. It installs
+Python 3.12 dependencies with the maintained uv action, runs Ruff, mypy, and
+pytest, starts an empty PostgreSQL 16 instance, upgrades it with Alembic,
+checks current/head and checksums, runs raw idempotency and smoke tests, then
+repeats the complete database sequence through `make db-reset`.

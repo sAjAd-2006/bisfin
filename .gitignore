@@ -11,6 +11,14 @@ postgres-data/
 *.log
 .tmp_pg_*/
 
+# Python and uv generated files
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 # Editor and operating-system files
 .idea/
 .vscode/

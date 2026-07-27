@@ -1,6 +1,6 @@
 # فرهنگ داده (Data Dictionary)
 
-این سند مکمل Migrationهای اجرایی `db/postgresql/001_core_schema.sql` و `db/postgresql/003_technical_backtest_completion.sql` است. تعریف SQL مرجع نهایی نوع، Default، `CHECK`، `PRIMARY KEY` و `FOREIGN KEY` است. توسعه بخش ML/DL در فاز فعلی متوقف است و تغییرات Migration 003 فقط به بک‌تست تکنیکال مربوط می‌شوند.
+این سند مکمل Migrationهای اجرایی `db/postgresql/migrations/0001_core_schema.sql` و `db/postgresql/migrations/0002_technical_backtest_completion.sql` است. تعریف SQL مرجع نهایی نوع، Default، `CHECK`، `PRIMARY KEY` و `FOREIGN KEY` است. توسعه بخش ML/DL در فاز فعلی متوقف است و Migration فنی `0002` فقط به بک‌تست تکنیکال مربوط می‌شود.
 
 نشانه‌ها: `NN` = `NOT NULL`، `NULL` = Nullable، `PK` = کلید اصلی، `FK` = کلید خارجی، `UQ` = یکتا، `ID` = `GENERATED ALWAYS AS IDENTITY`. تمام `TIMESTAMPTZ`ها دقت ۶ و قرارداد UTC دارند؛ همه بازه‌ها `[from,to)` هستند. تمام `NUMERIC`های مالی، مگر آن‌جا که صریحاً ذکر شده، `NUMERIC(38,18)` هستند.
 

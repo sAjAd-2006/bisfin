@@ -9,9 +9,9 @@ permissions:
 
 jobs:
   postgresql:
-    name: PostgreSQL 16 migrations and smoke tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    name: PostgreSQL 16 and Alembic verification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: bisfin_ci
       POSTGRES_DB: bisfin_ci
@@ -23,7 +23,24 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Install uv and Python 3.12
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.11.32"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Synchronize locked Python dependencies
+        run: uv sync --locked --dev
+
+      - name: Run Python lint checks
+        run: make python-lint
+
+      - name: Run Python tests
+        run: make python-test
 
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
@@ -37,11 +54,28 @@ jobs:
       - name: Wait for PostgreSQL
         run: make db-wait
 
-      - name: Apply migrations
+      - name: Apply Alembic migrations to an empty database
         run: make db-migrate
 
-      - name: Verify idempotency and run smoke tests
+      - name: Verify a second Alembic upgrade is a no-op
+        run: make db-migrate
+
+      - name: Show the current Alembic revision
+        run: make migration-current
+
+      - name: Verify the Alembic head and migration registry
+        run: make migration-check
+
+      - name: Verify raw SQL idempotency and run smoke tests
         run: make db-test
+
+      - name: Reset the database and repeat migrations and tests
+        run: make db-reset
+
+      - name: Verify the reset database revision and registry
+        run: |
+          make migration-current
+          make migration-check
 
       - name: Show PostgreSQL logs on failure
         if: failure()

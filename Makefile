@@ -1,7 +1,11 @@
 COMPOSE ?= docker compose
 BASH ?= bash
+UV ?= uv
+UV_ENV_ARG = $(if $(wildcard .env),--env-file .env,)
+UV_RUN = $(UV) run --frozen $(UV_ENV_ARG)
 
-.PHONY: db-up db-down db-logs db-wait db-migrate db-test db-reset db-shell
+.PHONY: db-up db-down db-logs db-wait db-migrate db-test db-reset db-shell \
+	migration-current migration-history migration-check python-lint python-test
 
 db-up:
 	$(COMPOSE) up -d postgres
@@ -26,3 +30,20 @@ db-reset:
 
 db-shell:
 	$(COMPOSE) exec postgres bash -Eeuo pipefail -c 'export PGPASSWORD="$$POSTGRES_PASSWORD"; exec psql -X --host=127.0.0.1 --port=5432 --username="$$POSTGRES_USER" --dbname="$$POSTGRES_DB"'
+
+migration-current:
+	$(UV_RUN) alembic current --verbose
+
+migration-history:
+	$(UV_RUN) alembic history --verbose
+
+migration-check:
+	$(UV_RUN) alembic current --check-heads
+	$(UV_RUN) python -m scripts.db.check_migrations
+
+python-lint:
+	$(UV_RUN) ruff check .
+	$(UV_RUN) mypy .
+
+python-test:
+	$(UV_RUN) pytest

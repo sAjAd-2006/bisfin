@@ -18,6 +18,14 @@ indent_size = 2
 indent_style = space
 indent_size = 4
 
+[*.py]
+indent_style = space
+indent_size = 4
+
+[*.toml]
+indent_style = space
+indent_size = 2
+
 [*.{md,sh}]
 indent_style = space
 indent_size = 2

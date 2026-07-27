@@ -30,13 +30,13 @@ run_sql() {
 
 bash "${SCRIPT_DIR}/wait.sh"
 
-run_sql "Idempotency check (migration 001)" \
-  "db/postgresql/001_core_schema.sql"
-run_sql "Idempotency check (migration 003)" \
-  "db/postgresql/003_technical_backtest_completion.sql"
+run_sql "Idempotency check (migration 0001)" \
+  "db/postgresql/migrations/0001_core_schema.sql"
+run_sql "Idempotency check (migration 0002)" \
+  "db/postgresql/migrations/0002_technical_backtest_completion.sql"
 run_sql "Core smoke test" \
-  "db/postgresql/002_smoke_test.sql"
+  "db/postgresql/tests/0001_core_smoke.sql"
 run_sql "Technical-backtest smoke test" \
-  "db/postgresql/004_technical_backtest_smoke_test.sql"
+  "db/postgresql/tests/0002_technical_backtest_smoke.sql"
 
 printf '\nDatabase idempotency checks and smoke tests completed successfully.\n'
