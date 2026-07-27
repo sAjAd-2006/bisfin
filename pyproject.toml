@@ -23,6 +23,9 @@ required-version = "==0.11.32"
 
 [tool.pytest.ini_options]
 addopts = "-ra --strict-config --strict-markers"
+markers = [
+  "integration: requires a running, migrated PostgreSQL database",
+]
 pythonpath = ["."]
 testpaths = ["tests"]
 

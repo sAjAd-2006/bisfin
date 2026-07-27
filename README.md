@@ -3,7 +3,9 @@
 Bisfin currently provides a PostgreSQL-first foundation for reproducible
 technical-strategy backtesting. It covers versioned market data,
 point-in-time replay, strategy runs, simulated execution, accounting, and
-performance reporting.
+performance reporting. Temporal catalog rows are protected against overlap,
+and historical bar consumers use the audited `market.bars_as_of(...)`
+interface instead of an unbounded latest-revision view.
 
 The Python 3.12 code in this repository is limited to migration
 infrastructure: Alembic executes the existing raw SQL and a small registry
@@ -90,7 +92,7 @@ migrations.
 
 ## Database and Python tests
 
-After migration, re-execute the idempotent raw migrations and both smoke
+After migration, re-execute all idempotent raw migrations and all SQL smoke
 tests:
 
 ```bash
@@ -101,8 +103,10 @@ The raw sequence is:
 
 1. `db/postgresql/migrations/0001_core_schema.sql` again
 2. `db/postgresql/migrations/0002_technical_backtest_completion.sql` again
-3. `db/postgresql/tests/0001_core_smoke.sql`
-4. `db/postgresql/tests/0002_technical_backtest_smoke.sql`
+3. `db/postgresql/migrations/0003_point_in_time_hardening.sql` again
+4. `db/postgresql/tests/0001_core_smoke.sql`
+5. `db/postgresql/tests/0002_technical_backtest_smoke.sql`
+6. `db/postgresql/tests/0003_point_in_time_hardening_smoke.sql`
 
 The smoke tests manage their own transactions and roll back their fixtures.
 Every `psql` invocation uses `ON_ERROR_STOP=1`, so it fails on the first SQL
@@ -113,6 +117,14 @@ Run Python validation independently with:
 ```bash
 make python-lint
 make python-test
+```
+
+The regular Python suite skips the live PostgreSQL concurrency module unless
+it is explicitly enabled. With PostgreSQL migrated through `0003`, run its
+bounded two-connection test with:
+
+```bash
+make db-test-pit
 ```
 
 To drop and recreate only the configured development database, then run
@@ -133,14 +145,15 @@ make db-reset
 | `make db-logs` | Follow recent PostgreSQL logs. |
 | `make db-wait` | Wait for an authenticated query to succeed. |
 | `make db-migrate` | Upgrade the database to Alembic head. |
-| `make db-test` | Reapply raw migrations and run both smoke tests. |
+| `make db-test` | Reapply all raw migrations and run all SQL smoke tests. |
+| `make db-test-pit` | Run the real PostgreSQL temporal-concurrency test. |
 | `make db-reset` | Recreate the development DB, migrate, and test it. |
 | `make db-shell` | Open an interactive containerized `psql`. |
 | `make migration-current` | Verify/report the current Alembic head. |
 | `make migration-history` | Show ordered Alembic history. |
 | `make migration-check` | Validate DB state, registry, files, and checksums. |
 | `make python-lint` | Run Ruff and mypy. |
-| `make python-test` | Run pytest. |
+| `make python-test` | Run database-independent pytest tests. |
 
 ## Raw SQL order and safety model
 
@@ -150,6 +163,7 @@ SQLAlchemy metadata. The only production/development order is:
 
 1. Alembic revision `0001` -> `db/postgresql/migrations/0001_core_schema.sql`
 2. Alembic revision `0002` -> `db/postgresql/migrations/0002_technical_backtest_completion.sql`
+3. Alembic revision `0003` -> `db/postgresql/migrations/0003_point_in_time_hardening.sql`
 
 Before execution, the registry verifies the file exists and that its SHA-256
 matches the recorded value. A session-level PostgreSQL advisory lock prevents
@@ -170,4 +184,35 @@ GitHub Actions runs on Ubuntu 24.04 for every push and pull request. It installs
 Python 3.12 dependencies with the maintained uv action, runs Ruff, mypy, and
 pytest, starts an empty PostgreSQL 16 instance, upgrades it with Alembic,
 checks current/head and checksums, runs raw idempotency and smoke tests, then
-repeats the complete database sequence through `make db-reset`.
+runs the real two-connection overlap test and repeats the complete database
+sequence through `make db-reset`.
+
+## Point-in-time safeguards
+
+Migration `0003` enforces non-overlapping half-open intervals for the logical
+keys of `catalog.instrument_identifier`,
+`catalog.instrument_spec_version`, and `catalog.universe_member`. A
+transaction-scoped advisory lock derived from the table and logical key
+serializes competing checks without a table-wide writer bottleneck. Temporal
+writes deliberately require PostgreSQL `READ COMMITTED`; other isolation
+levels receive SQLSTATE `0A000` because a stale transaction snapshot cannot
+provide the same guarantee after waiting for an advisory lock.
+
+Historical code must call:
+
+```sql
+market.bars_as_of(
+    p_bar_series_id BIGINT,
+    p_from_ts TIMESTAMPTZ,
+    p_to_ts TIMESTAMPTZ,
+    p_knowledge_cutoff_ts TIMESTAMPTZ,
+    p_replay_mode VARCHAR
+)
+```
+
+`PUBLIC_REPLAY` filters by `available_at`; `ACTUAL_SYSTEM_REPLAY` filters by
+`system_available_at`. Both modes also require a final bar, completion by the
+cutoff, a half-open event range, and deterministically select one latest
+eligible revision. The existing `market.current_bar` view is retained only
+for current-state/operational use and is unsafe for historical backtests,
+point-in-time features, or historical ML datasets.

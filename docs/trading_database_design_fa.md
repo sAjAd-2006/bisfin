@@ -3,7 +3,7 @@
 - نسخه سند: ۱.۰
 - پروفایل اجرایی مرجع: PostgreSQL 16+
 - قرارداد زمانی: UTC در پایگاه داده، منطقه زمانی بازار فقط در Metadata
-DDL مرجع: `db/postgresql/migrations/0001_core_schema.sql` و `db/postgresql/migrations/0002_technical_backtest_completion.sql`
+DDL مرجع: `db/postgresql/migrations/0001_core_schema.sql`، `db/postgresql/migrations/0002_technical_backtest_completion.sql` و `db/postgresql/migrations/0003_point_in_time_hardening.sql`
 
 > فاز اجرایی فعلی فقط تکمیل بک‌تست تکنیکال است. Schemaهای ML/DL موجود حفظ شده‌اند، اما تا فاز بعدی توسعه یا بهینه‌سازی نمی‌شوند.
 
@@ -79,6 +79,7 @@ catalog.data_snapshot  -- knowledge cutoff + component checksums
 10. **Money و Price با Float ذخیره نمی‌شوند.** Float فقط برای Metric و Tensor آموزش استفاده می‌شود.
 11. **Snapshot شرط Point-in-Time را حذف نمی‌کند.** `knowledge_cutoff_ts` فقط سقف Revisionهای قابل انتخاب است؛ در هر لحظه تصمیم نیز باید Revision انتخابی در همان `decision_ts` قابل‌دسترسی بوده باشد.
 12. **Availability یک Feature مشتق‌شده از تمام ورودی‌هاست.** زمان عمومی آن حداقل `GREATEST(window_end_ts, max_source_available_at, availability_rule_ts)` و زمان واقعی سامانه حداقل `GREATEST(feature_available_at, materialization_finished_at)` است.
+13. **مصرف تاریخی Bar فقط از `market.bars_as_of` انجام می‌شود.** View `market.current_bar` cutoff ندارد و فقط برای Current-state عملیاتی است.
 
 ### ۱.۵ انتخاب نوع داده
 
@@ -216,6 +217,14 @@ DDL اجرایی و Commentهای ستونی در `db/postgresql/migrations/0001
 - تعدیلات: `corporate_action`, `adjustment_set`, `adjustment_factor`.
 - Bias/Reproducibility: `universe`, `universe_member`, `data_snapshot`, `data_snapshot_component`.
 
+Migration `0003` بازه‌های نیمه‌باز `[from,to)` را برای سه کلید منطقی زیر در سطح دیتابیس غیرهم‌پوشان می‌کند:
+
+- `(provider_id, identifier_type, identifier_value)` در `catalog.instrument_identifier`؛
+- `instrument_id` در `catalog.instrument_spec_version`؛
+- `(universe_id, instrument_id)` در `catalog.universe_member`.
+
+`NULL` در انتهای بازه مثبت بی‌نهایت است و بازه‌های مجاور مجازند. Trigger هر جدول ابتدا `pg_advisory_xact_lock` مشتق از نام جدول و همان کلید منطقی را می‌گیرد و سپس هم‌پوشانی را بررسی می‌کند؛ بنابراین دو Writer رقیب برای یک Entity هم‌زمان Commit نمی‌شوند، ولی کلیدهای مستقل قفل سراسری ندارند. خطای هم‌پوشانی `23P01` است و پیام، جدول، کلید و بازه پیشنهادی را مشخص می‌کند.
+
 ### ۳.۳ جدول‌های Ingestion و Market
 
 - Audit: `ingestion_batch`, `raw_event`.
@@ -301,9 +310,21 @@ Partitionهای آینده باید پیشاپیش ساخته شوند. نبود
 
 پارامترهای `:name` باید با Bind Parameter در Driver جایگزین شوند، نه String Interpolation.
 
-### ۵.۱ واکشی کندل یک نماد برای بک‌تست، با Revision قابل‌دانستن در هر تصمیم
+### ۵.۱ واکشی کندل یک نماد برای بک‌تست با `market.bars_as_of`
 
-این Query هم بازه زمانی را برای Partition Pruning می‌دهد و هم مانع استفاده از اصلاحی می‌شود که بعد از تصمیم آن Bar وارد شده است. `:decision_lag` مثلاً `0 seconds` یا تأخیر واقعی Strategy است.
+Migration `0003` Query انتخاب Revision را در یک Interface ممیزی‌شده متمرکز می‌کند. چون Schema نوع Enum/Domain مشترکی برای Replay ندارد، پارامتر آخر `VARCHAR` است و فقط دو مقدار دقیق `PUBLIC_REPLAY` و `ACTUAL_SYSTEM_REPLAY` را می‌پذیرد:
+
+```sql
+market.bars_as_of(
+    p_bar_series_id BIGINT,
+    p_from_ts TIMESTAMPTZ,
+    p_to_ts TIMESTAMPTZ,
+    p_knowledge_cutoff_ts TIMESTAMPTZ,
+    p_replay_mode VARCHAR
+)
+```
+
+نمونه Canonical برای resolve نماد و واکشی یک بازه:
 
 ```sql
 WITH selected_series AS (
@@ -325,47 +346,45 @@ WITH selected_series AS (
       AND p.provider_code = :provider_code
       AND f.feed_code = :feed_code
       AND bs.price_basis = :price_basis
-), eligible AS (
-    SELECT
-        b.*,
-        CASE
-          WHEN ds.availability_mode = 'PUBLIC_REPLAY' THEN b.available_at
-          ELSE b.system_available_at
-        END AS eligible_at,
-        ROW_NUMBER() OVER (
-            PARTITION BY b.bar_series_id, b.bar_open_ts
-            ORDER BY
-              CASE WHEN ds.availability_mode = 'PUBLIC_REPLAY'
-                   THEN b.available_at ELSE b.system_available_at END DESC,
-              b.revision_no DESC
-        ) AS revision_rank
-    FROM market.bar_revision AS b
-    JOIN selected_series AS ss USING (bar_series_id)
-    JOIN catalog.data_snapshot AS ds
-      ON ds.data_snapshot_id = :data_snapshot_id
-     AND ds.status = 'FROZEN'
-    WHERE b.bar_open_ts >= :from_ts
-      AND b.bar_open_ts <  :to_ts
-      AND b.is_final = TRUE
-      AND CASE WHEN ds.availability_mode = 'PUBLIC_REPLAY'
-               THEN b.available_at ELSE b.system_available_at END
-          <= LEAST(
-                 b.bar_close_ts + CAST(:decision_lag AS INTERVAL),
-                 ds.knowledge_cutoff_ts
-             )
 )
 SELECT
-    bar_open_ts, bar_close_ts, trading_date,
-    open_price, high_price, low_price, close_price,
-    official_close_price, settlement_price,
-    volume, quote_volume, trade_count, vwap, open_interest,
-    revision_no, eligible_at
-FROM eligible
-WHERE revision_rank = 1
-ORDER BY bar_open_ts;
+    b.bar_open_ts,
+    b.bar_close_ts,
+    b.open_price,
+    b.high_price,
+    b.low_price,
+    b.close_price,
+    b.volume,
+    b.revision_no,
+    b.effective_available_at
+FROM selected_series AS ss
+CROSS JOIN LATERAL market.bars_as_of(
+    ss.bar_series_id,
+    :from_ts,
+    :to_ts,
+    LEAST(:decision_ts, :snapshot_knowledge_cutoff_ts),
+    :replay_mode
+) AS b
+ORDER BY b.bar_open_ts;
 ```
 
-نکته: برای مقایسه صرفاً «داده اصلاح‌شده تا یک تاریخ ثابت»، سمت راست شرط Availability را با `:as_of_ts` جایگزین کنید. برای Backtest واقعی، شرط Bar-by-Bar بالا صحیح‌تر است.
+برای Replay عمومی و Replay واقعی سامانه، فراخوانی مستقیم به‌ترتیب چنین است:
+
+```sql
+SELECT *
+FROM market.bars_as_of(
+    :bar_series_id, :from_ts, :to_ts, :cutoff_ts, 'PUBLIC_REPLAY'
+);
+
+SELECT *
+FROM market.bars_as_of(
+    :bar_series_id, :from_ts, :to_ts, :cutoff_ts, 'ACTUAL_SYSTEM_REPLAY'
+);
+```
+
+تابع فقط `is_final = TRUE` و `bar_close_ts <= cutoff` را می‌پذیرد، بازه رویداد را `[from_ts,to_ts)` اعمال می‌کند و در هر Bar آخرین Revision واجد شرایط را بر اساس Availability متناظر و سپس `revision_no DESC` انتخاب می‌کند. بنابراین Correction دیرهنگام فقط پس از cutoff خودش دیده می‌شود و دو Mode در فاصله `available_at < cutoff < system_available_at` پاسخ متفاوت دارند.
+
+برای Replay ترتیبی باید این تابع در هر مرز تصمیم با `cutoff = LEAST(decision_ts, snapshot.knowledge_cutoff_ts)` فراخوانی شود و `to_ts <= cutoff` باشد. استفاده از یک cutoff انتهای Run برای همه تصمیم‌های قبلی، Correctionهایی را که آن زمان قابل‌دانستن نبودند وارد می‌کند. `market.current_bar` هیچ cutoff و الزام Final ندارد و برای Backtest تاریخی، Feature PIT یا Dataset تاریخی ML ممنوع است؛ جست‌وجوی Repository مصرف‌کننده اجرایی تاریخی برای آن پیدا نکرد.
 
 ### ۵.۲ استخراج Window دقیق ۲۰ کندلی + Feature + Label برای LSTM
 
@@ -533,8 +552,10 @@ WHERE dv.dataset_version_id = :dataset_version_id
 - Workerهای Bulk/ML Pool جدا و محدود داشته باشند تا API گرسنه نشود.
 - Session را با `SET TIME ZONE 'UTC'`, `application_name`, `statement_timeout`, `lock_timeout` و `idle_in_transaction_session_timeout` مقداردهی کنید.
 - Readهای معمول `READ COMMITTED`؛ ساخت Snapshot/Freeze در Transaction کوتاه و کنترل‌شده `REPEATABLE READ` یا با Watermark صریح انجام شود.
+- `INSERT/UPDATE` روی `instrument_identifier`, `instrument_spec_version` و `universe_member` فقط در `READ COMMITTED` مجاز است؛ Guard در Isolation دیگر `0A000` می‌دهد، چون Snapshot ثابت پس از انتظار Advisory Lock ممکن است Commit رقیب را نبیند. این محدودیت به Transactionهای فقط‌خواندنی Snapshot مربوط نیست.
 - Retry فقط برای خطاهای Transient مانند Serialization/Deadlock و با Idempotency Key انجام شود.
 - Migration با Advisory Lock و Checksum اجرا شود؛ `IF NOT EXISTS` جای Versioned Migration را نمی‌گیرد.
+- Collision بسیار نادر Hash قفل ممکن است دو کلید مستقل را محافظه‌کارانه سریال کند، ولی هم‌پوشانی کاذب نمی‌سازد. تغییر گروهی چند بازه باید با ترتیب ثابت کلید/زمان انجام شود و Deadlock عادی `40P01` قابل Retry باشد.
 
 ### ۶.۲ خواندن Batch و Training
 
@@ -552,6 +573,7 @@ WHERE dv.dataset_version_id = :dataset_version_id
 - `knowledge_cutoff_ts` Dataset/Snapshot فقط سقف داده‌های قابل انتخاب هنگام ساخت است و جای شرط `eligible_at <= prediction_ts` را برای هر Sample نمی‌گیرد.
 - Fundamental با `period_end` Join نمی‌شود؛ با زمان انتشار Filing/Codal قابل استفاده است.
 - Back-adjusted Price می‌تواند Corporate Action آینده را وارد گذشته کند؛ Adjustment Policy و Knowledge Cutoff باید صریح و نسخه‌دار باشد.
+- `market.bars_as_of` برای Series تعدیل‌شده‌ای که `adjustment_set.knowledge_cutoff_ts` آن پس از cutoff Query است، `22023` می‌دهد تا Corporate Action آینده وارد گذشته نشود.
 - فقط Bar نهایی (`is_final`) ورودی Feature است. Bar ناقص، Halt و Missing Session باید Flag شوند.
 - Forward-fill فقط با محدودیت Domain و از گذشته به آینده؛ Backward-fill ممنوع است.
 - StandardScaler، Imputer، PCA، Encoder و Feature Selection فقط روی Train Fold Fit و Artifact آن‌ها Hash شود.
@@ -640,14 +662,13 @@ WHERE dv.dataset_version_id = :dataset_version_id
 
 ### اعتبارسنجی تحویل حاضر
 
-- `db/postgresql/migrations/0001_core_schema.sql` از صفر روی PostgreSQL 18.3 اجرا شد.
-- همان Migration بار دوم بدون خطا اجرا شد (Idempotency smoke test).
-- `db/postgresql/tests/0001_core_smoke.sql` سه Query اصلی را `PREPARE/EXPLAIN` کرد و Helper ماهانه Range→چهار Hash Leaf را داخل Transaction ساخت؛ سپس کل تست Rollback شد.
-- `db/postgresql/migrations/0002_technical_backtest_completion.sql` از صفر و بار دوم بدون خطا اجرا شد و بخش‌های ML/DL را تغییر نداد.
-- `db/postgresql/tests/0002_technical_backtest_smoke.sql` ورود Quote و حقیقی/حقوقی، Snapshot Frozen، جلوگیری واقعی از Look-ahead، زنجیره Decision→Signal→Order→Fill، Lineage اجرای Typed، Position Ledger و Valuation Revision را در Transaction آزمایش و Rollback کرد.
-- Catalog نهایی شامل ۷۲ جدول منطقی/پارتیشن‌شده، ۱۹۲ ایندکس صریح و ضمنی، ۱۵۸ Foreign Key، ۲۴۳ Check Constraint و ۶ Trigger کاربردی بود.
-- شمار `invalid_indexes` و `unvalidated_constraints` هر دو صفر بود.
-- Cluster و پوشه آزمایشی موقت پس از پایان اعتبارسنجی متوقف و حذف شدند.
+- زنجیره Alembic `0001 -> 0002 -> 0003 (head)` از دیتابیس خالی روی PostgreSQL 16 اجرا و اجرای دوم آن No-op شد؛ هر سه Raw Migration نیز دوباره بدون خطا اعمال شدند.
+- SHA-256 چهار SQL پیشین با مبنای قبل از تغییر یکسان ماند و Migration `0003` در Registry دارای Checksum ثابت است.
+- Smokeهای `0001` و `0002` بدون تغییر اجرا شدند؛ Smoke `0003` تمام حالت‌های Interval سه جدول، دو Replay Mode، Correction دیرهنگام، Bar آینده/غیرنهایی، مرز Range، ورودی نامعتبر و ناامنی `current_bar` را داخل Transaction آزمایش و Rollback کرد.
+- تست واقعی Psycopg با دو اتصال، انتظار Advisory Lock برای کلید مشترک و رد Writer دوم با `23P01`، عبور کلید مستقل و رد Isolation ناسازگار با `0A000` را با Timeout محدود اثبات کرد.
+- `EXPLAIN (ANALYZE, BUFFERS)` برای Public و Actual-system روی پارتیشن نماینده به‌ترتیب Index Scan ایندکس‌های PIT موجود را نشان داد؛ ایندکس تکراری افزوده نشد.
+- حداقل ۷۲ جدول منطقی/پارتیشن‌شده حفظ شد و شمار `invalid_indexes` و `unvalidated_constraints` هر دو صفر باقی ماند.
+- فرمان‌های `make db-migrate` دوبار، `make db-test`, `make db-test-pit`, `make db-reset`, `make migration-check`, `make python-lint` و `make python-test` مسیرهای تکرارپذیر اعتبارسنجی هستند.
 
 ---
 

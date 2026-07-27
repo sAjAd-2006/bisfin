@@ -39,7 +39,7 @@ jobs:
       - name: Run Python lint checks
         run: make python-lint
 
-      - name: Run Python tests
+      - name: Run Python unit tests
         run: make python-test
 
       - name: Validate Docker Compose configuration
@@ -53,6 +53,9 @@ jobs:
 
       - name: Wait for PostgreSQL
         run: make db-wait
+
+      - name: Validate migration files, checksums, and Alembic history
+        run: uv run --frozen python -m scripts.db.check_migrations
 
       - name: Apply Alembic migrations to an empty database
         run: make db-migrate
@@ -69,13 +72,21 @@ jobs:
       - name: Verify raw SQL idempotency and run smoke tests
         run: make db-test
 
+      - name: Run PIT integration and concurrency tests
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make db-test-pit
+
       - name: Reset the database and repeat migrations and tests
         run: make db-reset
 
-      - name: Verify the reset database revision and registry
+      - name: Verify the reset database and PIT integration
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
         run: |
           make migration-current
           make migration-check
+          make db-test-pit
 
       - name: Show PostgreSQL logs on failure
         if: failure()

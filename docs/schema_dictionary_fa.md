@@ -1,6 +1,6 @@
 # فرهنگ داده (Data Dictionary)
 
-این سند مکمل Migrationهای اجرایی `db/postgresql/migrations/0001_core_schema.sql` و `db/postgresql/migrations/0002_technical_backtest_completion.sql` است. تعریف SQL مرجع نهایی نوع، Default، `CHECK`، `PRIMARY KEY` و `FOREIGN KEY` است. توسعه بخش ML/DL در فاز فعلی متوقف است و Migration فنی `0002` فقط به بک‌تست تکنیکال مربوط می‌شود.
+این سند مکمل Migrationهای اجرایی `db/postgresql/migrations/0001_core_schema.sql`، `db/postgresql/migrations/0002_technical_backtest_completion.sql` و `db/postgresql/migrations/0003_point_in_time_hardening.sql` است. تعریف SQL مرجع نهایی نوع، Default، `CHECK`، `PRIMARY KEY` و `FOREIGN KEY` است. توسعه بخش ML/DL در فاز فعلی متوقف است؛ Migration `0003` فقط جامعیت زمانی Catalog و دسترسی امن Point-in-Time به Bar را سخت‌گیرانه می‌کند.
 
 نشانه‌ها: `NN` = `NOT NULL`، `NULL` = Nullable، `PK` = کلید اصلی، `FK` = کلید خارجی، `UQ` = یکتا، `ID` = `GENERATED ALWAYS AS IDENTITY`. تمام `TIMESTAMPTZ`ها دقت ۶ و قرارداد UTC دارند؛ همه بازه‌ها `[from,to)` هستند. تمام `NUMERIC`های مالی، مگر آن‌جا که صریحاً ذکر شده، `NUMERIC(38,18)` هستند.
 
@@ -96,6 +96,7 @@
 - `instrument_id BIGINT NN FK -> instrument`: ابزار Canonical.
 - `is_primary BOOLEAN NN`: شناسه اصلی در آن دوره.
 - `metadata JSONB NN`: نام خام و مشخصات اضافی.
+- Migration `0003` هم‌پوشانی `[valid_from,valid_to)` را بر کلید منطقی `(provider_id, identifier_type, identifier_value)` با SQLSTATE `23P01` منع می‌کند؛ `valid_to IS NULL` یعنی `infinity` و مرزهای مساوی مجاور مجازند.
 
 ### `catalog.instrument_spec_version` — مشخصات معامله‌پذیری تاریخ‌مند
 
@@ -107,6 +108,7 @@
 - `lower_price_limit`, `upper_price_limit NUMERIC NULL`: دامنه مجاز همان نسخه.
 - `shares_outstanding NUMERIC(38,6) NULL`: سهام/واحد منتشرشده.
 - `metadata JSONB NN`: حجم مبنا، Margin rule و مشخصات خاص.
+- Migration `0003` هم‌پوشانی `[effective_from,effective_to)` را برای هر `instrument_id` منع می‌کند.
 
 ### `catalog.derivative_contract` — Subtype مشتقه
 
@@ -145,6 +147,9 @@
 
 - `universe`: `universe_id BIGINT PK ID`، `universe_code VARCHAR(96) NN UQ`، `display_name TEXT NN`، `selection_rule JSONB NN`، `created_at TIMESTAMPTZ NN`.
 - `universe_member`: `universe_id BIGINT NN PK/FK`، `instrument_id BIGINT NN PK/FK`، `valid_from TIMESTAMPTZ NN PK`، `valid_to TIMESTAMPTZ NULL`، `weight DOUBLE NULL`، `source_reason TEXT NULL`.
+- Migration `0003` هم‌پوشانی `[valid_from,valid_to)` را برای هر `(universe_id, instrument_id)` منع می‌کند.
+
+هر سه Guard پیش از Query هم‌پوشانی یک `pg_advisory_xact_lock` مشتق از نام جدول و کلید منطقی می‌گیرند؛ بنابراین رقابت فقط برای همان Entity سریال می‌شود. نوشتن این سه جدول باید در `READ COMMITTED` باشد؛ Isolation قوی‌تر با `0A000` رد می‌شود تا Snapshot قدیمی پس از انتظار قفل، جامعیت را تضعیف نکند.
 
 ### `catalog.data_snapshot` و `catalog.data_snapshot_component` — مرز تکرارپذیری
 
@@ -330,6 +335,9 @@
 
 ## View و Helper
 
-- `market.current_bar`: آخرین Revision عمومی هر `(bar_series_id, bar_open_ts)`؛ برای Replay تاریخی باید Query دارای cutoff استفاده شود، نه این View.
+- `market.bars_as_of(BIGINT,TIMESTAMPTZ,TIMESTAMPTZ,TIMESTAMPTZ,VARCHAR)`: API رسمی تاریخی برای یک `bar_series_id` و بازه `[from,to)`؛ در `PUBLIC_REPLAY` از `available_at` و در `ACTUAL_SYSTEM_REPLAY` از `system_available_at` استفاده می‌کند، فقط Bar نهاییِ تکمیل‌شده تا cutoff را می‌پذیرد و یک Revision قطعی را به‌ترتیب زمانی برمی‌گرداند. ستون `effective_available_at` زمان Availability مؤثر Mode انتخابی است.
+- `market.current_bar`: آخرین Revision عمومی هر `(bar_series_id, bar_open_ts)` بدون cutoff و بدون الزام `is_final`؛ فقط برای Current-state عملیاتی است و برای Backtest تاریخی، تولید Feature به‌صورت PIT یا Dataset تاریخی ML ناامن است. جست‌وجوی Repository پیش از `0003` مصرف‌کننده اجرایی برای این View پیدا نکرد.
 - `market.create_bar_month_partition(month, hash_buckets)`: Partition ماهانه UTC می‌سازد؛ مقدار ۰ یعنی فقط Range و ۲ تا ۶۴ یعنی Hash Subpartition بر اساس `bar_series_id`.
 - `market.create_technical_month_partitions(month, hash_buckets)`: Partition همان ماه را برای Bar، Tape، Snapshot/Level/Delta دفتر سفارش، Quote و حقیقی/حقوقی یکجا می‌سازد.
+
+ورودی NULL تابع `bars_as_of` با `22004`، Range/Mode/Cutoff نامعتبر یا Adjustment آینده‌دان با `22023` و Series ناشناخته با `P0002` رد می‌شود. برای Replay ترتیبی، cutoff هر فراخوانی باید `LEAST(decision_ts, snapshot.knowledge_cutoff_ts)` باشد؛ یک cutoff انتهای Run ممکن است Correctionهای دیرهنگام را برای تصمیم‌های قدیمی آشکار کند.
