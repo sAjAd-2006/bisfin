@@ -1,45 +1,76 @@
 [project]
-name = "bisfin-database"
+name = "bisfin"
 version = "0.1.0"
-description = "Database migration and verification tooling for Bisfin."
+description = "Typed Python application and database foundation for Bisfin."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "alembic>=1.17.1,<2",
+  "pydantic>=2.12,<3",
+  "pydantic-settings>=2.11,<3",
   "psycopg[binary]>=3.2,<4",
   "sqlalchemy>=2,<3",
 ]
+
+[project.scripts]
+bisfin = "bisfin.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
   "mypy",
   "pytest",
+  "pytest-asyncio",
   "ruff",
 ]
 
 [tool.uv]
-package = false
 required-version = "==0.11.32"
 
+[tool.hatch.build.targets.wheel]
+packages = ["src/bisfin"]
+
 [tool.pytest.ini_options]
-addopts = "-ra --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers -m 'not integration'"
 markers = [
+  "unit: fast test that does not require external infrastructure",
   "integration: requires a running, migrated PostgreSQL database",
 ]
-pythonpath = ["."]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# Import classification changed when the src layout was introduced. Preserve
+# unrelated pre-PR migration modules byte-for-byte instead of sorting them.
+"alembic/env.py" = ["I001"]
+"scripts/db/check_migrations.py" = ["I001"]
+"tests/test_migration_registry.py" = ["I001"]
+"tests/test_temporal_overlap_concurrency.py" = ["I001"]
+
+[tool.ruff.format]
+# These two predate the formatter gate. PR-04 deliberately avoids unrelated
+# mechanical rewrites while all new tests remain format-checked.
+exclude = [
+  "tests/test_migration_registry.py",
+  "tests/test_temporal_overlap_concurrency.py",
+]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
 explicit_package_bases = true
+mypy_path = "src"
 pretty = true
 show_error_codes = true
 warn_unused_configs = true

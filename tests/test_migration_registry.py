@@ -24,7 +24,13 @@ from migration_registry import (
     validate_registry,
 )
 
+from bisfin.schema_contract import ALEMBIC_HEAD_REVISION
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_runtime_schema_contract_matches_registered_head() -> None:
+    assert MIGRATIONS[-1].revision == ALEMBIC_HEAD_REVISION
 
 
 def test_missing_migration_file_is_rejected(tmp_path: Path) -> None:
@@ -92,6 +98,7 @@ def test_database_url_fallback_preserves_special_credentials() -> None:
             "POSTGRES_DB": "bisfin-test",
             "POSTGRES_USER": username,
             "POSTGRES_PASSWORD": password,
+            "POSTGRES_HOST": "127.0.0.1",
             "POSTGRES_PORT": "55432",
         }
     )
@@ -99,7 +106,7 @@ def test_database_url_fallback_preserves_special_credentials() -> None:
     assert url.drivername == "postgresql+psycopg"
     assert url.username == username
     assert url.password == password
-    assert url.host == "localhost"
+    assert url.host == "127.0.0.1"
     assert url.port == 55432
     assert url.database == "bisfin-test"
 

@@ -14,10 +14,19 @@ jobs:
     timeout-minutes: 20
     env:
       COMPOSE_PROJECT_NAME: bisfin_ci
+      BISFIN_ENV: ci
+      BISFIN_LOG_LEVEL: INFO
+      BISFIN_LOG_FORMAT: console
       POSTGRES_DB: bisfin_ci
       POSTGRES_USER: bisfin_ci
       POSTGRES_PASSWORD: bisfin_ci_ephemeral_password
+      POSTGRES_HOST: 127.0.0.1
       POSTGRES_PORT: 55432
+      DATABASE_POOL_SIZE: 5
+      DATABASE_MAX_OVERFLOW: 5
+      DATABASE_POOL_TIMEOUT_SECONDS: 30
+      DATABASE_STATEMENT_TIMEOUT_MS: 30000
+      DATABASE_APPLICATION_NAME: bisfin-ci
       DB_WAIT_ATTEMPTS: 60
       DB_WAIT_INTERVAL_SECONDS: 1
 
@@ -36,8 +45,14 @@ jobs:
       - name: Synchronize locked Python dependencies
         run: uv sync --locked --dev
 
+      - name: Verify dependency lock
+        run: uv lock --check
+
       - name: Run Python lint checks
         run: make python-lint
+
+      - name: Check Python formatting
+        run: make python-format-check
 
       - name: Run Python unit tests
         run: make python-test
@@ -77,16 +92,33 @@ jobs:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make db-test-pit
 
+      - name: Run Python database integration tests
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make python-test-integration
+
+      - name: Validate application configuration
+        run: make app-config-check
+
+      - name: Verify application database health
+        run: make app-db-health
+
+      - name: Verify application database revision
+        run: make app-db-current
+
       - name: Reset the database and repeat migrations and tests
         run: make db-reset
 
-      - name: Verify the reset database and PIT integration
+      - name: Verify the reset database, application health, and PIT integration
         env:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: |
           make migration-current
           make migration-check
+          make app-db-health
+          make app-db-current
           make db-test-pit
+          make python-test-integration
 
       - name: Show PostgreSQL logs on failure
         if: failure()

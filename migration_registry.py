@@ -11,10 +11,11 @@ from pathlib import Path, PurePosixPath
 from typing import NoReturn, cast
 
 import psycopg
+from alembic import op
 from sqlalchemy.engine import URL, make_url
 from sqlalchemy.engine import Connection as SQLAlchemyConnection
 
-from alembic import op
+from bisfin.schema_contract import ALEMBIC_HEAD_REVISION
 
 
 class MigrationRegistryError(RuntimeError):
@@ -83,7 +84,7 @@ MIGRATIONS: tuple[MigrationSpec, ...] = (
         sha256="8a225a1b1cb3fd4ccdb6a61aaff88f17df8449ca859eeaa6e144dbd53be2445d",
     ),
     MigrationSpec(
-        revision="0003",
+        revision=ALEMBIC_HEAD_REVISION,
         down_revision="0002",
         relative_path=PurePosixPath(
             "db/postgresql/migrations/0003_point_in_time_hardening.sql"
@@ -154,7 +155,7 @@ def build_database_url(environ: Mapping[str, str] | None = None) -> URL:
         drivername="postgresql+psycopg",
         username=source["POSTGRES_USER"],
         password=source["POSTGRES_PASSWORD"],
-        host="localhost",
+        host=source.get("POSTGRES_HOST", "localhost"),
         port=port,
         database=source["POSTGRES_DB"],
     )

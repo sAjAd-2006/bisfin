@@ -663,12 +663,52 @@ WHERE dv.dataset_version_id = :dataset_version_id
 ### اعتبارسنجی تحویل حاضر
 
 - زنجیره Alembic `0001 -> 0002 -> 0003 (head)` از دیتابیس خالی روی PostgreSQL 16 اجرا و اجرای دوم آن No-op شد؛ هر سه Raw Migration نیز دوباره بدون خطا اعمال شدند.
-- SHA-256 چهار SQL پیشین با مبنای قبل از تغییر یکسان ماند و Migration `0003` در Registry دارای Checksum ثابت است.
+- SHA-256 هر شش SQL محافظت‌شده (سه Migration و سه Smoke Test) با مبنای قبل از تغییر یکسان ماند و Migration `0003` در Registry دارای Checksum ثابت است.
 - Smokeهای `0001` و `0002` بدون تغییر اجرا شدند؛ Smoke `0003` تمام حالت‌های Interval سه جدول، دو Replay Mode، Correction دیرهنگام، Bar آینده/غیرنهایی، مرز Range، ورودی نامعتبر و ناامنی `current_bar` را داخل Transaction آزمایش و Rollback کرد.
 - تست واقعی Psycopg با دو اتصال، انتظار Advisory Lock برای کلید مشترک و رد Writer دوم با `23P01`، عبور کلید مستقل و رد Isolation ناسازگار با `0A000` را با Timeout محدود اثبات کرد.
 - `EXPLAIN (ANALYZE, BUFFERS)` برای Public و Actual-system روی پارتیشن نماینده به‌ترتیب Index Scan ایندکس‌های PIT موجود را نشان داد؛ ایندکس تکراری افزوده نشد.
 - حداقل ۷۲ جدول منطقی/پارتیشن‌شده حفظ شد و شمار `invalid_indexes` و `unvalidated_constraints` هر دو صفر باقی ماند.
 - فرمان‌های `make db-migrate` دوبار، `make db-test`, `make db-test-pit`, `make db-reset`, `make migration-check`, `make python-lint` و `make python-test` مسیرهای تکرارپذیر اعتبارسنجی هستند.
+
+### بنیاد برنامهٔ Python و دسترسی Typed (PR-04)
+
+لایهٔ اجرایی جدید در `src/bisfin` عمداً Schema را بازطراحی نمی‌کند. این لایه با
+Python 3.12، Pydantic 2، SQLAlchemy 2 Core و Psycopg 3 تنظیمات Typed، لاگ
+ساختاریافته، Pool اتصال همگام، Transaction Manager، Unit of Work، DTOهای frozen
+و Repositoryهای دامنه‌محور را فراهم می‌کند. SQLAlchemy metadata فقط برای ساخت
+Query است و هیچ `metadata.create_all()` یا ORM domain model وجود ندارد.
+
+Mapping حداقلی بر اساس Inspection کاتالوگ واقعی PostgreSQL است. نام فیزیکی Provider
+`catalog.data_provider` است، Schema موجود Feature Store برابر `ml` است و
+`catalog.instrument_spec_version` برای پاسخ به `get_active_spec` نیز map شده است.
+تست Integration نام Schema/Table، ستون، Nullability و Primary Key این subset را با
+کاتالوگ زنده مقایسه می‌کند؛ SQLهای migration و smoke-test همچنان مرجع تغییرناپذیر
+ساختار هستند.
+
+خواندن تاریخی Bar در `SqlAlchemyBarRepository` فقط تابع
+`market.bars_as_of(...)` را با Replay Mode صریح صدا می‌زند. انتخاب Revision در
+Python تکرار نشده و `market.current_bar` برای Query تاریخی استفاده نمی‌شود. قیمت
+و Quantity در DTOها `Decimal` و Timestampهای `TIMESTAMPTZ` الزاماً timezone-aware
+هستند. Transaction پیش‌فرض PostgreSQL همان `READ COMMITTED` باقی می‌ماند؛ UoW یک
+Connection/Transaction را بین سه Repository به اشتراک می‌گذارد، Commit صریح است
+و خروج بدون Commit یا خروج با Exception به Rollback می‌انجامد.
+
+Health Check بدون Table Scan سنگین، اتصال، PostgreSQL 16، Alembic head، Schemaهای
+`catalog/ingest/market/backtest/ml`، تابع PIT، Index نامعتبر و Constraint
+تأییدنشده را بررسی می‌کند. سه فرمان زیر تنها عملیات CLI این مرحله هستند:
+
+```bash
+uv run --frozen bisfin config-check
+uv run --frozen bisfin db-health
+uv run --frozen bisfin db-current
+```
+
+تست‌های معمول با `make python-test` به Docker نیاز ندارند. تست‌های Integration با
+`make python-test-integration` روی PostgreSQL 16 واقعی و دیتابیس migrateشده اجرا
+می‌شوند. جزئیات جهت وابستگی، مدیریت Secret، Engine، Error/SQLSTATE، مرزهای
+Repository و محدودیت‌های مرحلهٔ بعد در
+`docs/python_application_architecture_fa.md` ثبت شده است. در PR-04 هیچ تماس BrsApi،
+درج Bar، Migration `0004`، API Server، Worker یا Pipeline ML پیاده‌سازی نشده است.
 
 ---
 

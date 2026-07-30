@@ -46,4 +46,4 @@ if [[ -f "${REPO_ROOT}/.env" ]]; then
   load_dotenv "${REPO_ROOT}/.env"
 fi
 
-uv run alembic upgrade head
+uv run --frozen alembic upgrade head
