@@ -1,6 +1,6 @@
 """Unit coverage for deterministic, time-aware instrument repository queries."""
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import cast
 from unittest.mock import MagicMock
@@ -129,3 +129,46 @@ def test_active_spec_preserves_decimal_and_detects_multiple_rows() -> None:
     result.return_value = [_spec_row(), _spec_row()]
     with pytest.raises(IntegrityViolationError):
         repository.get_active_spec(41, datetime(2025, 6, 1, tzinfo=UTC))
+
+
+def test_identifier_existence_is_diagnostic_only() -> None:
+    connection, mock = _connection()
+    mock.execute.return_value.scalar_one.return_value = True
+
+    assert SqlAlchemyInstrumentRepository(connection).identifier_exists(3, "BRSAPI_L18", "۰۰۰۷")
+    rendered = str(mock.execute.call_args.args[0])
+    assert "EXISTS" in rendered
+    assert "trading_session" not in rendered
+
+
+def test_joined_resolution_uses_exact_regular_session_open() -> None:
+    connection, mock = _connection()
+    row = _resolved_row()
+    row["venue_id"] = 7
+    row.update(
+        {
+            "session_venue_id": 7,
+            "session_trading_date": date(2026, 7, 1),
+            "session_session_code": "REGULAR",
+            "session_is_trading_day": False,
+            "session_session_open_ts": datetime(2026, 7, 1, 5, 30, tzinfo=UTC),
+            "session_session_close_ts": None,
+            "session_settlement_date": None,
+            "session_metadata": {},
+        }
+    )
+    mock.execute.return_value.mappings.return_value.all.return_value = [row]
+
+    resolved = SqlAlchemyInstrumentRepository(connection).find_by_identifier_for_regular_session(
+        3,
+        "BRSAPI_L18",
+        "0000007",
+        date(2026, 7, 1),
+    )
+
+    assert resolved is not None
+    assert resolved.trading_session.is_trading_day is False
+    rendered = str(mock.execute.call_args.args[0])
+    assert "trading_session.session_open_ts" in rendered
+    assert "instrument_identifier.valid_from <= catalog.trading_session.session_open_ts" in rendered
+    assert "trading_session.is_trading_day IS true" not in rendered

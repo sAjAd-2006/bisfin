@@ -12,11 +12,13 @@ db/postgresql/
 |-- migrations/
 |   |-- 0001_core_schema.sql
 |   |-- 0002_technical_backtest_completion.sql
-|   `-- 0003_point_in_time_hardening.sql
+|   |-- 0003_point_in_time_hardening.sql
+|   `-- 0004_ingestion_runtime_support.sql
 `-- tests/
     |-- 0001_core_smoke.sql
     |-- 0002_technical_backtest_smoke.sql
-    `-- 0003_point_in_time_hardening_smoke.sql
+    |-- 0003_point_in_time_hardening_smoke.sql
+    `-- 0004_ingestion_runtime_support_smoke.sql
 ```
 
 ## Canonical migration order
@@ -27,6 +29,7 @@ order is:
 1. Alembic revision `0001`: `migrations/0001_core_schema.sql`
 2. Alembic revision `0002`: `migrations/0002_technical_backtest_completion.sql`
 3. Alembic revision `0003`: `migrations/0003_point_in_time_hardening.sql`
+4. Alembic revision `0004`: `migrations/0004_ingestion_runtime_support.sql`
 
 `migration_registry.py` records this dependency chain and the SHA-256 of each
 file. Every upgrade verifies existence and checksum before executing SQL.
@@ -83,6 +86,23 @@ The migration validates existing data before installing the guards, is
 idempotent, owns its `BEGIN`/`COMMIT`, uses no extension, and adds no index
 because the existing logical-key/PIT indexes already match the predicates.
 
+### `migrations/0004_ingestion_runtime_support.sql`
+
+Adds only `ingest.create_raw_event_month_partition(DATE)`. The function creates
+one deterministic `ingest.raw_event_yYYYYmMM` UTC range partition, never a
+default or symbol-specific partition. It takes a transaction-scoped advisory
+lock before its catalog check, so concurrent callers for the same month
+serialize and a repeated call is a no-op. A same-name relation that is not
+attached to `ingest.raw_event` fails closed instead of being accepted.
+
+The helper requires `READ COMMITTED`: after waiting for the lock, its separate
+catalog statement must receive a fresh command snapshot. `NULL` is rejected
+with SQLSTATE `22004`, and stale-snapshot isolation with `0A000`. Its registered
+SHA-256 is
+`188080740e805ed9d58de2f4c72a3007b6c46a45e3b253e7f5226d8538a417b7`.
+No extension, table alteration, default partition, or change to revisions
+`0001` through `0003` is involved.
+
 ## Test purposes
 
 ### `tests/0001_core_smoke.sql`
@@ -116,6 +136,19 @@ revision selection, invalid inputs, catalog integrity, and representative
 The real same-key/different-key concurrency behavior is tested separately by
 `tests/test_temporal_overlap_concurrency.py` through `make db-test-pit`.
 
+### `tests/0004_ingestion_runtime_support_smoke.sql`
+
+Creates and recreates a test raw-event month inside a rolled-back transaction,
+routes rows at the exact UTC lower boundary and final microsecond before the
+exclusive upper boundary, and verifies that an uncreated next month rejects an
+insert. It also checks direct parent attachment, all four inherited child
+indexes (primary key plus three existing indexes), and validated constraints.
+
+True two-session creation is covered by
+`tests/test_raw_event_partition_concurrency.py`: the second caller is observed
+waiting on the advisory lock, both calls commit, and exactly one healthy child
+partition remains. Finite timeouts make lock regressions fail deterministically.
+
 ## Transaction and locking behavior
 
 Alembic uses a synchronous psycopg connection and a session-level PostgreSQL
@@ -139,6 +172,13 @@ isolation with SQLSTATE `0A000`: after a lock wait, the overlap query must see
 a fresh snapshot of the preceding writer. SQLSTATE `23P01` identifies an
 actual overlap. Multi-row interval reshaping should be issued in deterministic
 key/time order; ordinary PostgreSQL deadlocks remain retryable.
+
+The raw-event partition helper uses another transaction-scoped lock keyed by
+UTC month. The current ingestion service calls it for the acquisition's
+`response_received_at` month before inserting rows. This is distinct from
+Alembic's session lock and from per-bar revision locks. Raw-event partition
+creation and temporal-validity writes deliberately reject stale-snapshot
+isolation because visibility after a lock wait requires `READ COMMITTED`.
 
 ## Point-in-time bar contract
 
@@ -178,9 +218,11 @@ After Alembic reaches head, `scripts/db/test.sh` executes:
 1. `migrations/0001_core_schema.sql` again for idempotency
 2. `migrations/0002_technical_backtest_completion.sql` again for idempotency
 3. `migrations/0003_point_in_time_hardening.sql` again for idempotency
-4. `tests/0001_core_smoke.sql`
-5. `tests/0002_technical_backtest_smoke.sql`
-6. `tests/0003_point_in_time_hardening_smoke.sql`
+4. `migrations/0004_ingestion_runtime_support.sql` again for idempotency
+5. `tests/0001_core_smoke.sql`
+6. `tests/0002_technical_backtest_smoke.sql`
+7. `tests/0003_point_in_time_hardening_smoke.sql`
+8. `tests/0004_ingestion_runtime_support_smoke.sql`
 
 Automated `psql` calls use `-X` and `ON_ERROR_STOP=1`. No wrapper transaction
 is added because every SQL file already controls its own transaction.

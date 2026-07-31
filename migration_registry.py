@@ -84,12 +84,20 @@ MIGRATIONS: tuple[MigrationSpec, ...] = (
         sha256="8a225a1b1cb3fd4ccdb6a61aaff88f17df8449ca859eeaa6e144dbd53be2445d",
     ),
     MigrationSpec(
-        revision=ALEMBIC_HEAD_REVISION,
+        revision="0003",
         down_revision="0002",
         relative_path=PurePosixPath(
             "db/postgresql/migrations/0003_point_in_time_hardening.sql"
         ),
         sha256="04e6ab36f457de807202ddd0b619b813f01a627693582c19a2a1ac50a5331c3a",
+    ),
+    MigrationSpec(
+        revision=ALEMBIC_HEAD_REVISION,
+        down_revision="0003",
+        relative_path=PurePosixPath(
+            "db/postgresql/migrations/0004_ingestion_runtime_support.sql"
+        ),
+        sha256="188080740e805ed9d58de2f4c72a3007b6c46a45e3b253e7f5226d8538a417b7",
     ),
 )
 

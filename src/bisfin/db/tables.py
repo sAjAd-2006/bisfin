@@ -68,6 +68,81 @@ data_provider = Table(
 provider = data_provider
 
 
+data_feed = Table(
+    "data_feed",
+    metadata,
+    Column(
+        "feed_id",
+        BigInteger,
+        Identity(always=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "provider_id",
+        SmallInteger,
+        ForeignKey("catalog.data_provider.provider_id"),
+        nullable=False,
+    ),
+    Column("feed_code", VARCHAR(96), nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("data_kind", VARCHAR(32), nullable=False),
+    Column("native_timezone", VARCHAR(64), nullable=True),
+    Column("parser_version", Text, nullable=True),
+    Column("active_from", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("active_to", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    UniqueConstraint("provider_id", "feed_code"),
+    schema="catalog",
+)
+
+
+timeframe = Table(
+    "timeframe",
+    metadata,
+    Column(
+        "timeframe_id",
+        SmallInteger,
+        Identity(always=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("timeframe_code", VARCHAR(16), nullable=False, unique=True),
+    Column("display_name", Text, nullable=False),
+    Column("duration_seconds", Integer, nullable=True),
+    Column("calendar_unit", VARCHAR(16), nullable=False, server_default=text("'FIXED'")),
+    Column("session_aligned", Boolean, nullable=False, server_default=text("false")),
+    schema="catalog",
+)
+
+
+trading_session = Table(
+    "trading_session",
+    metadata,
+    Column(
+        "venue_id",
+        SmallInteger,
+        ForeignKey("catalog.venue.venue_id"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("trading_date", Date, primary_key=True, nullable=False),
+    Column(
+        "session_code",
+        VARCHAR(24),
+        primary_key=True,
+        nullable=False,
+        server_default=text("'REGULAR'"),
+    ),
+    Column("is_trading_day", Boolean, nullable=False, server_default=text("true")),
+    Column("session_open_ts", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("session_close_ts", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("settlement_date", Date, nullable=True),
+    Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    schema="catalog",
+)
+
+
 instrument = Table(
     "instrument",
     metadata,
@@ -372,6 +447,9 @@ bar_revision = Table(
 
 MAPPED_TABLES = (
     data_provider,
+    data_feed,
+    timeframe,
+    trading_session,
     instrument,
     instrument_identifier,
     instrument_spec_version,
@@ -386,6 +464,7 @@ __all__ = [
     "NAMING_CONVENTION",
     "bar_revision",
     "bar_series",
+    "data_feed",
     "data_provider",
     "ingestion_batch",
     "instrument",
@@ -394,4 +473,6 @@ __all__ = [
     "metadata",
     "provider",
     "raw_event",
+    "timeframe",
+    "trading_session",
 ]

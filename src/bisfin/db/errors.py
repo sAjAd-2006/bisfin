@@ -13,8 +13,8 @@ from sqlalchemy.exc import DBAPIError, OperationalError, SQLAlchemyError
 _DATABASE_URL = re.compile(r"(?i)\bpostgres(?:ql)?(?:\+psycopg)?://[^\s'\"<>]+")
 _AUTHORIZATION_HEADER = re.compile(r"(?i)\b(authorization)(\s*[:=]\s*)[^;\r\n]+")
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|credential)"
-    r"(\s*[:=]\s*)[^;\r\n]+"
+    r"(?i)\b(password|passwd|pwd|secret|token|api[_-]?key|key|credential)"
+    r"([\"']?\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^,;}\r\n]+)"
 )
 _AUTHENTICATION_TOKEN = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
 

@@ -29,8 +29,8 @@ def test_database_health_is_healthy_for_migrated_postgresql_16(db_engine: Engine
     report = DatabaseHealthChecker(db_engine).check()
 
     assert report.healthy is True, report.summary()
-    assert report.current_revision == "0003"
-    assert report.expected_revision == "0003"
+    assert report.current_revision == "0004"
+    assert report.expected_revision == "0004"
     assert report.postgresql_major_version == 16
     schemas = next(check for check in report.checks if check.name == "required_schemas")
     assert schemas.details["required_schemas"] == sorted(REQUIRED_SCHEMAS)
@@ -42,4 +42,4 @@ def test_database_health_detects_revision_mismatch(db_engine: Engine) -> None:
 
     assert report.healthy is False
     assert revision.healthy is False
-    assert revision.details["current_revisions"] == ("0003",)
+    assert revision.details["current_revisions"] == ("0004",)

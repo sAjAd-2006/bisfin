@@ -57,6 +57,9 @@ jobs:
       - name: Run Python unit tests
         run: make python-test
 
+      - name: Run focused BrsApi fixture unit tests
+        run: make brsapi-test
+
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
@@ -97,6 +100,18 @@ jobs:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make python-test-integration
 
+      - name: Run BrsApi ingestion integration tests
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make brsapi-test-integration
+
+      - name: Run fixture-backed BrsApi CLI end to end
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: >-
+          uv run --frozen pytest -m integration
+          tests/integration/test_brsapi_ingestion.py::test_cli_fixture_mode_end_to_end
+
       - name: Validate application configuration
         run: make app-config-check
 
@@ -119,6 +134,8 @@ jobs:
           make app-db-current
           make db-test-pit
           make python-test-integration
+          make brsapi-test-integration
+          uv run --frozen pytest -m integration tests/integration/test_brsapi_ingestion.py::test_cli_fixture_mode_end_to_end
 
       - name: Show PostgreSQL logs on failure
         if: failure()

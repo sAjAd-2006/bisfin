@@ -21,6 +21,15 @@ _DATABASE_ENVIRONMENT_KEYS = (
     "DATABASE_POOL_TIMEOUT_SECONDS",
     "DATABASE_STATEMENT_TIMEOUT_MS",
     "DATABASE_APPLICATION_NAME",
+    "BRSAPI_BASE_URL",
+    "BRSAPI_API_KEY",
+    "BRSAPI_CONNECT_TIMEOUT_SECONDS",
+    "BRSAPI_READ_TIMEOUT_SECONDS",
+    "BRSAPI_USER_AGENT",
+    "BRSAPI_PROVIDER_CODE",
+    "BRSAPI_DAILY_RAW_FEED_CODE",
+    "BRSAPI_IDENTIFIER_TYPE",
+    "BRSAPI_DEFAULT_TIMEZONE",
 )
 
 
@@ -196,3 +205,50 @@ def test_malformed_database_url_is_rejected_without_echoing_secret() -> None:
         _ = settings.sqlalchemy_database_url
 
     assert secret not in f"{error.value!r} {error.value}"
+
+
+def test_brsapi_defaults_are_safe_and_fixture_compatible() -> None:
+    settings = _settings()
+
+    assert settings.brsapi_base_url == "https://Api.BrsApi.ir/"
+    assert settings.brsapi_api_key is None
+    assert settings.brsapi_provider_code == "BRSAPI"
+    assert settings.brsapi_daily_raw_feed_code == "TSETMC_CANDLE_DAILY_RAW"
+    assert settings.brsapi_identifier_type == "BRSAPI_L18"
+    assert settings.brsapi_default_timezone == "Asia/Tehran"
+    assert settings.safe_summary()["brsapi_api_key_configured"] == "no"
+
+
+def test_brsapi_api_key_is_secret_and_only_configuration_state_is_summarized() -> None:
+    secret = "brsapi-never-print-this"
+    settings = _settings(brsapi_api_key=secret)
+
+    rendered = f"{settings!r} {settings.model_dump_json()} {settings.safe_summary()!r}"
+    assert secret not in rendered
+    assert settings.safe_summary()["brsapi_api_key_configured"] == "yes"
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://Api.BrsApi.ir/",
+        "ftp://Api.BrsApi.ir/",
+        "https:///missing-host",
+        "https://user:password@Api.BrsApi.ir/",
+        "https://Api.BrsApi.ir/?key=secret",
+    ],
+)
+def test_brsapi_base_url_rejects_insecure_or_credentialed_values(base_url: str) -> None:
+    with pytest.raises(ValidationError):
+        _settings(brsapi_base_url=base_url)
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_brsapi_timeouts_must_be_positive_and_finite(timeout: float) -> None:
+    with pytest.raises(ValidationError):
+        _settings(brsapi_connect_timeout_seconds=timeout)
+
+
+def test_brsapi_timezone_must_be_an_iana_zone() -> None:
+    with pytest.raises(ValidationError):
+        _settings(brsapi_default_timezone="Mars/Olympus")

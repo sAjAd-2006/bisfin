@@ -1,6 +1,6 @@
 # فرهنگ داده (Data Dictionary)
 
-این سند مکمل Migrationهای اجرایی `db/postgresql/migrations/0001_core_schema.sql`، `db/postgresql/migrations/0002_technical_backtest_completion.sql` و `db/postgresql/migrations/0003_point_in_time_hardening.sql` است. تعریف SQL مرجع نهایی نوع، Default، `CHECK`، `PRIMARY KEY` و `FOREIGN KEY` است. توسعه بخش ML/DL در فاز فعلی متوقف است؛ Migration `0003` فقط جامعیت زمانی Catalog و دسترسی امن Point-in-Time به Bar را سخت‌گیرانه می‌کند.
+این سند مکمل زنجیرهٔ Migrationهای اجرایی `0001` تا `0004` در `db/postgresql/migrations/` است. تعریف SQL مرجع نهایی نوع، Default، `CHECK`، `PRIMARY KEY` و `FOREIGN KEY` است. توسعه بخش ML/DL در فاز فعلی متوقف است؛ Migration `0003` جامعیت زمانی Catalog و دسترسی امن Point-in-Time به Bar را سخت‌گیرانه می‌کند و Migration `0004` فقط Helper هم‌زمانی امن برای Partition ماهانهٔ Raw Event را می‌افزاید.
 
 نشانه‌ها: `NN` = `NOT NULL`، `NULL` = Nullable، `PK` = کلید اصلی، `FK` = کلید خارجی، `UQ` = یکتا، `ID` = `GENERATED ALWAYS AS IDENTITY`. تمام `TIMESTAMPTZ`ها دقت ۶ و قرارداد UTC دارند؛ همه بازه‌ها `[from,to)` هستند. تمام `NUMERIC`های مالی، مگر آن‌جا که صریحاً ذکر شده، `NUMERIC(38,18)` هستند.
 
@@ -182,6 +182,7 @@
 - `observed_at TIMESTAMPTZ NULL`: زمان مشاهده شبکه/Collector.
 - `payload_sha256 CHAR(64) NN`, `raw_payload JSONB NN`: Hash و Payload تغییرنکرده.
 - `validation_status VARCHAR(16) NN`, `validation_errors JSONB NN`: نتیجه Contract/Data Quality.
+- `ingest.create_raw_event_month_partition(month)`: Partition ماهانهٔ UTC با نام `raw_event_yYYYYmMM` می‌سازد؛ قفل Advisory تراکنشی، اجرای تکراری و هم‌زمان را در `READ COMMITTED` امن می‌کند و هیچ Default Partition نمی‌سازد.
 
 ### `market.bar_series` — هویت یک سری کندل
 

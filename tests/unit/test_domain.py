@@ -13,6 +13,7 @@ from bisfin.domain import (
     InstrumentSpecification,
     PointInTimeBar,
     RawEvent,
+    RawEventValidationStatus,
     ReplayMode,
     ResolvedInstrument,
 )
@@ -176,7 +177,7 @@ def test_raw_event_serialization_preserves_external_text_without_implicit_secret
         source_date_text="1403/10/13",
         payload_sha256="a" * 64,
         raw_payload={"instrumentCode": "000001"},
-        validation_status="PENDING",
+        validation_status=RawEventValidationStatus.PENDING,
     )
 
     serialized = event.model_dump_json()

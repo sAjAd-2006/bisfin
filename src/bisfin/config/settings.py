@@ -1,8 +1,10 @@
 """Environment-backed, secret-aware application settings."""
 
+import math
 from functools import lru_cache
 from typing import Literal
 from urllib.parse import quote, urlsplit
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -68,6 +70,52 @@ class Settings(BaseSettings):
         validation_alias="DATABASE_APPLICATION_NAME",
     )
 
+    brsapi_base_url: str = Field(
+        default="https://Api.BrsApi.ir/",
+        validation_alias="BRSAPI_BASE_URL",
+    )
+    brsapi_api_key: SecretStr | None = Field(default=None, validation_alias="BRSAPI_API_KEY")
+    brsapi_connect_timeout_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        validation_alias="BRSAPI_CONNECT_TIMEOUT_SECONDS",
+    )
+    brsapi_read_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        validation_alias="BRSAPI_READ_TIMEOUT_SECONDS",
+    )
+    brsapi_user_agent: str = Field(
+        default="bisfin/0.1 brsapi-daily-bars",
+        min_length=1,
+        max_length=256,
+        validation_alias="BRSAPI_USER_AGENT",
+    )
+    brsapi_provider_code: str = Field(
+        default="BRSAPI",
+        min_length=1,
+        max_length=64,
+        validation_alias="BRSAPI_PROVIDER_CODE",
+    )
+    brsapi_daily_raw_feed_code: str = Field(
+        default="TSETMC_CANDLE_DAILY_RAW",
+        min_length=1,
+        max_length=96,
+        validation_alias="BRSAPI_DAILY_RAW_FEED_CODE",
+    )
+    brsapi_identifier_type: str = Field(
+        default="BRSAPI_L18",
+        min_length=1,
+        max_length=32,
+        validation_alias="BRSAPI_IDENTIFIER_TYPE",
+    )
+    brsapi_default_timezone: str = Field(
+        default="Asia/Tehran",
+        min_length=1,
+        max_length=64,
+        validation_alias="BRSAPI_DEFAULT_TIMEZONE",
+    )
+
     @field_validator("environment", "log_format", mode="before")
     @classmethod
     def _normalize_lowercase(cls, value: object) -> object:
@@ -77,6 +125,58 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_log_level(cls, value: object) -> object:
         return value.strip().upper() if isinstance(value, str) else value
+
+    @field_validator("brsapi_base_url")
+    @classmethod
+    def _validate_brsapi_base_url(cls, value: str) -> str:
+        normalized = value.strip()
+        parsed = urlsplit(normalized)
+        if parsed.scheme.lower() != "https" or not parsed.hostname:
+            raise ValueError("BRSAPI_BASE_URL must be an absolute HTTPS URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("BRSAPI_BASE_URL must not contain credentials, query, or fragment")
+        return normalized.rstrip("/") + "/"
+
+    @field_validator("brsapi_connect_timeout_seconds", "brsapi_read_timeout_seconds")
+    @classmethod
+    def _validate_finite_timeout(cls, value: float) -> float:
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError("BrsApi timeouts must be positive and finite")
+        return value
+
+    @field_validator(
+        "brsapi_user_agent",
+        "brsapi_provider_code",
+        "brsapi_daily_raw_feed_code",
+        "brsapi_identifier_type",
+        "brsapi_default_timezone",
+    )
+    @classmethod
+    def _strip_brsapi_text(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("BrsApi text settings must not be blank")
+        if "\r" in normalized or "\n" in normalized:
+            raise ValueError("BrsApi text settings must not contain line breaks")
+        return normalized
+
+    @field_validator("brsapi_default_timezone")
+    @classmethod
+    def _validate_brsapi_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError:
+            raise ValueError("BRSAPI_DEFAULT_TIMEZONE must be an IANA timezone") from None
+        return value
+
+    @field_validator("brsapi_api_key", mode="before")
+    @classmethod
+    def _normalize_optional_brsapi_api_key(cls, value: object) -> object:
+        if value is None:
+            return None
+        raw = value.get_secret_value() if isinstance(value, SecretStr) else str(value)
+        normalized = raw.strip()
+        return SecretStr(normalized) if normalized else None
 
     @property
     def sqlalchemy_database_url(self) -> str:
@@ -127,6 +227,15 @@ class Settings(BaseSettings):
             "database_pool_timeout_seconds": self.database_pool_timeout_seconds,
             "database_statement_timeout_ms": self.database_statement_timeout_ms,
             "database_application_name": self.database_application_name,
+            "brsapi_base_url": self.brsapi_base_url,
+            "brsapi_connect_timeout_seconds": self.brsapi_connect_timeout_seconds,
+            "brsapi_read_timeout_seconds": self.brsapi_read_timeout_seconds,
+            "brsapi_user_agent": self.brsapi_user_agent,
+            "brsapi_provider_code": self.brsapi_provider_code,
+            "brsapi_daily_raw_feed_code": self.brsapi_daily_raw_feed_code,
+            "brsapi_identifier_type": self.brsapi_identifier_type,
+            "brsapi_default_timezone": self.brsapi_default_timezone,
+            "brsapi_api_key_configured": "yes" if self.brsapi_api_key else "no",
         }
 
     def _explicit_database_url(self) -> str | None:

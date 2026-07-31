@@ -20,23 +20,36 @@ _CONTEXT_FIELDS = (
     "request_id",
     "correlation_id",
     "ingestion_batch_id",
+    "provider_code",
+    "feed_code",
+    "symbol",
     "backtest_run_id",
 )
 _log_context: ContextVar[LogContext] = ContextVar("bisfin_log_context", default={})
 
 _DATABASE_URL_PATTERN = re.compile(r"(?i)\b(?:postgres|postgresql)(?:\+psycopg)?://[^\s\"'<>]+")
 _SECRET_ASSIGNMENT_PATTERN = re.compile(
-    r"(?i)\b(?:postgres_password|database_url|password)\b"
+    r"(?i)\b(postgres_password|database_url|password|api[_-]?key|key|authorization|token)\b"
     r"\s*(?:=|:|'\s*:\s*|\"\s*:\s*)\s*"
     r"(?:'[^']*'|\"[^\"]*\"|[^\s,;}]+)"
 )
+_KEYED_URL_PATTERN = re.compile(r"(?i)([?&]key=)[^&#\s]+")
+_AUTH_TOKEN_PATTERN = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
 
 
 def redact_sensitive_text(value: str) -> str:
     """Redact PostgreSQL URLs and common password assignments from text."""
 
     redacted = _DATABASE_URL_PATTERN.sub("[REDACTED_DATABASE_URL]", value)
-    return _SECRET_ASSIGNMENT_PATTERN.sub("password=[REDACTED]", redacted)
+    redacted = _KEYED_URL_PATTERN.sub(r"\1[REDACTED]", redacted)
+    redacted = _AUTH_TOKEN_PATTERN.sub(r"\1 [REDACTED]", redacted)
+    return _SECRET_ASSIGNMENT_PATTERN.sub(_redacted_assignment, redacted)
+
+
+def _redacted_assignment(match: re.Match[str]) -> str:
+    key = match.group(1).lower()
+    label = "password" if "password" in key else key
+    return f"{label}=[REDACTED]"
 
 
 def bind_log_context(
@@ -44,6 +57,9 @@ def bind_log_context(
     request_id: str | None = None,
     correlation_id: str | None = None,
     ingestion_batch_id: int | str | None = None,
+    provider_code: str | None = None,
+    feed_code: str | None = None,
+    symbol: str | None = None,
     backtest_run_id: int | str | None = None,
 ) -> Token[LogContext]:
     """Merge supplied correlation fields into this context and return a reset token."""
@@ -54,6 +70,9 @@ def bind_log_context(
             "request_id": request_id,
             "correlation_id": correlation_id,
             "ingestion_batch_id": ingestion_batch_id,
+            "provider_code": provider_code,
+            "feed_code": feed_code,
+            "symbol": symbol,
             "backtest_run_id": backtest_run_id,
         }.items()
         if value is not None
@@ -85,6 +104,9 @@ def log_context(
     request_id: str | None = None,
     correlation_id: str | None = None,
     ingestion_batch_id: int | str | None = None,
+    provider_code: str | None = None,
+    feed_code: str | None = None,
+    symbol: str | None = None,
     backtest_run_id: int | str | None = None,
 ) -> Iterator[None]:
     """Bind correlation fields and always restore the previous context."""
@@ -93,6 +115,9 @@ def log_context(
         request_id=request_id,
         correlation_id=correlation_id,
         ingestion_batch_id=ingestion_batch_id,
+        provider_code=provider_code,
+        feed_code=feed_code,
+        symbol=symbol,
         backtest_run_id=backtest_run_id,
     )
     try:

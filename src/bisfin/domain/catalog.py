@@ -1,5 +1,6 @@
-"""Catalog DTOs reflecting canonical and time-versioned instrument semantics."""
+"""Catalog DTOs reflecting feeds, sessions, and time-versioned instruments."""
 
+from datetime import date
 from decimal import Decimal
 
 from pydantic import Field
@@ -16,6 +17,39 @@ class Provider(ImmutableDTO):
     default_timezone: str | None = None
     metadata: JsonObject = Field(default_factory=dict)
     created_at: AwareDateTime
+
+
+class DataFeed(ImmutableDTO):
+    feed_id: int
+    provider_id: int
+    feed_code: str
+    display_name: str
+    data_kind: str
+    native_timezone: str | None = None
+    parser_version: str | None = None
+    active_from: AwareDateTime | None = None
+    active_to: AwareDateTime | None = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+
+class Timeframe(ImmutableDTO):
+    timeframe_id: int
+    timeframe_code: str
+    display_name: str
+    duration_seconds: int | None = None
+    calendar_unit: str
+    session_aligned: bool
+
+
+class TradingSession(ImmutableDTO):
+    venue_id: int
+    trading_date: date
+    session_code: str
+    is_trading_day: bool
+    session_open_ts: AwareDateTime | None = None
+    session_close_ts: AwareDateTime | None = None
+    settlement_date: date | None = None
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class Instrument(ImmutableDTO):
@@ -71,3 +105,11 @@ class ResolvedInstrument(ImmutableDTO):
 
     instrument: Instrument
     identifier: InstrumentIdentifier
+
+
+class SessionResolvedInstrument(ImmutableDTO):
+    """A historical identifier resolved at one canonical session open."""
+
+    instrument: Instrument
+    identifier: InstrumentIdentifier
+    trading_session: TradingSession

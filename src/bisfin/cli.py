@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Protocol, TextIO
 
 from pydantic import ValidationError
@@ -14,7 +16,18 @@ from bisfin.config import Settings, get_settings
 from bisfin.db.engine import create_engine, dispose_engine
 from bisfin.db.errors import BisfinError, redact_secrets
 from bisfin.db.health import DatabaseHealthChecker, DatabaseHealthReport
+from bisfin.domain.ingestion import IngestionBatchStatus
+from bisfin.ingestion.results import DailyBarIngestionResult
+from bisfin.ingestion.service import BrsApiDailyBarIngestionService
+from bisfin.integrations.brsapi import (
+    BrsApiClient,
+    BrsApiConfigurationError,
+    BrsApiError,
+    FixtureBrsApiClient,
+    HttpxBrsApiClient,
+)
 from bisfin.logging import configure_logging
+from bisfin.repositories import create_unit_of_work_factory
 
 SettingsFactory = Callable[[], Settings]
 EngineFactory = Callable[[Settings], Engine]
@@ -25,6 +38,7 @@ class HealthChecker(Protocol):
 
 
 HealthCheckerFactory = Callable[[Engine], HealthChecker]
+IngestionRunner = Callable[[argparse.Namespace, Settings], DailyBarIngestionResult]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,6 +49,25 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands.add_parser("config-check", help="validate and print non-secret settings")
     subcommands.add_parser("db-health", help="run PostgreSQL health checks")
     subcommands.add_parser("db-current", help="compare current and expected revisions")
+    ingest = subcommands.add_parser("ingest", help="run one explicit ingestion operation")
+    ingest_commands = ingest.add_subparsers(dest="ingest_command", required=True)
+    daily = ingest_commands.add_parser(
+        "brsapi-daily-bars",
+        help="ingest BrsApi TSETMC unadjusted daily candles (type=2)",
+    )
+    daily.add_argument("--symbol", required=True, help="provider l18 identifier")
+    daily.add_argument("--request-id", help="caller-owned idempotency key")
+    daily.add_argument(
+        "--fixture",
+        type=Path,
+        help="read exact response bytes locally and disable all network access",
+    )
+    daily.add_argument(
+        "--output-format",
+        choices=("human", "json"),
+        default="human",
+        help="bounded secret-free result format",
+    )
     return parser
 
 
@@ -44,6 +77,7 @@ def run(
     settings_factory: SettingsFactory = get_settings,
     engine_factory: EngineFactory = create_engine,
     health_checker_factory: HealthCheckerFactory = DatabaseHealthChecker,
+    ingestion_runner: IngestionRunner | None = None,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
@@ -69,6 +103,40 @@ def run(
         for key, value in settings.safe_summary().items():
             print(f"{key}={value}", file=stdout)
         return 0
+
+    if arguments.command == "ingest":
+        configure_logging(
+            level=settings.log_level,
+            log_format=settings.log_format,
+            environment=settings.environment,
+            application=settings.application,
+        )
+        runner = ingestion_runner or _run_brsapi_daily_ingestion
+        try:
+            result = runner(arguments, settings)
+        except (BisfinError, BrsApiError, ValueError) as error:
+            if arguments.output_format == "json":
+                print(
+                    json.dumps(
+                        {
+                            "error": "ingestion_failed",
+                            "message": redact_secrets(error),
+                        },
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    file=stderr,
+                )
+            else:
+                print(f"ingestion: failed ({redact_secrets(error)})", file=stderr)
+            return 4
+
+        _print_ingestion_result(result, output_format=arguments.output_format, stdout=stdout)
+        if result.status is IngestionBatchStatus.SUCCEEDED:
+            return 0
+        if result.status is IngestionBatchStatus.PARTIAL:
+            return 3
+        return 4
 
     configure_logging(
         level=settings.log_level,
@@ -100,6 +168,81 @@ def run(
         return 0 if report.current_revision == report.expected_revision else 1
 
     raise AssertionError(f"unhandled command: {arguments.command}")
+
+
+def _run_brsapi_daily_ingestion(
+    arguments: argparse.Namespace,
+    settings: Settings,
+) -> DailyBarIngestionResult:
+    """Compose the one-shot service while guaranteeing Engine disposal."""
+
+    if arguments.ingest_command != "brsapi-daily-bars":
+        raise AssertionError(f"unhandled ingest command: {arguments.ingest_command}")
+
+    client: BrsApiClient
+    if arguments.fixture is not None:
+        client = FixtureBrsApiClient(arguments.fixture)
+    else:
+        api_key = settings.brsapi_api_key
+        if api_key is None or not api_key.get_secret_value().strip():
+            raise BrsApiConfigurationError("BRSAPI_API_KEY is required for live mode.")
+        client = HttpxBrsApiClient(
+            base_url=settings.brsapi_base_url,
+            api_key=api_key,
+            connect_timeout_seconds=settings.brsapi_connect_timeout_seconds,
+            read_timeout_seconds=settings.brsapi_read_timeout_seconds,
+            user_agent=settings.brsapi_user_agent,
+        )
+
+    engine: Engine | None = None
+    try:
+        engine = create_engine(settings)
+        service = BrsApiDailyBarIngestionService(
+            client=client,
+            unit_of_work_factory=create_unit_of_work_factory(engine),
+            settings=settings,
+        )
+        return service.ingest(
+            symbol=arguments.symbol,
+            request_id=arguments.request_id,
+        )
+    finally:
+        if engine is not None:
+            dispose_engine(engine)
+
+
+def _print_ingestion_result(
+    result: DailyBarIngestionResult,
+    *,
+    output_format: str,
+    stdout: TextIO,
+) -> None:
+    if output_format == "json":
+        print(
+            json.dumps(
+                result.model_dump(mode="json"),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            file=stdout,
+        )
+        return
+    print(
+        f"ingestion: {result.status.value.lower()} "
+        f"batch={result.ingestion_batch_id} symbol={result.symbol}",
+        file=stdout,
+    )
+    print(
+        f"rows received={result.received_count} accepted={result.accepted_count} "
+        f"rejected={result.rejected_count} raw={result.raw_inserted_count}",
+        file=stdout,
+    )
+    print(
+        f"bars inserted={result.bar_inserted_count} corrected={result.bar_corrected_count} "
+        f"unchanged={result.bar_unchanged_count}",
+        file=stdout,
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

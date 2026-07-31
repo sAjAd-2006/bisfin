@@ -16,7 +16,7 @@ from sqlalchemy.engine import Engine
     ("command", "expected_output"),
     (
         ("db-health", "healthy: PostgreSQL 16 reachable"),
-        ("db-current", "current_revision=0003"),
+        ("db-current", "current_revision=0004"),
     ),
 )
 def test_installed_database_commands(

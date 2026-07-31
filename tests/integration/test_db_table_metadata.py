@@ -58,6 +58,9 @@ def test_core_mappings_match_live_columns_nullability_types_and_primary_keys(
     expected_physical_tables = {table.fullname for table in MAPPED_TABLES}
     assert expected_physical_tables == {
         "catalog.data_provider",
+        "catalog.data_feed",
+        "catalog.timeframe",
+        "catalog.trading_session",
         "catalog.instrument",
         "catalog.instrument_identifier",
         "catalog.instrument_spec_version",

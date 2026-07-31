@@ -2,6 +2,6 @@
 
 from typing import Final
 
-ALEMBIC_HEAD_REVISION: Final[str] = "0003"
+ALEMBIC_HEAD_REVISION: Final[str] = "0004"
 
 __all__ = ["ALEMBIC_HEAD_REVISION"]

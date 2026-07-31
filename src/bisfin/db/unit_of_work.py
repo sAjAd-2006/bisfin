@@ -15,8 +15,18 @@ from bisfin.db.errors import UnitOfWorkLifecycleError
 
 
 @runtime_checkable
-class UnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT](Protocol):
+class UnitOfWork[
+    DataFeedRepositoryT,
+    InstrumentRepositoryT,
+    IngestionBatchRepositoryT,
+    RawEventRepositoryT,
+    BarRepositoryT,
+    BarWriterRepositoryT,
+](Protocol):
     """Small application-facing contract for explicit atomic work."""
+
+    @property
+    def data_feeds(self) -> DataFeedRepositoryT: ...
 
     @property
     def instruments(self) -> InstrumentRepositoryT: ...
@@ -25,7 +35,13 @@ class UnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepository
     def ingestion_batches(self) -> IngestionBatchRepositoryT: ...
 
     @property
+    def raw_events(self) -> RawEventRepositoryT: ...
+
+    @property
     def bars(self) -> BarRepositoryT: ...
+
+    @property
+    def bar_writer(self) -> BarWriterRepositoryT: ...
 
     def __enter__(self) -> Self: ...
 
@@ -42,12 +58,22 @@ class UnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepository
 
 
 @dataclass(frozen=True, slots=True)
-class RepositoryFactories[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT]:
+class RepositoryFactories[
+    DataFeedRepositoryT,
+    InstrumentRepositoryT,
+    IngestionBatchRepositoryT,
+    RawEventRepositoryT,
+    BarRepositoryT,
+    BarWriterRepositoryT,
+]:
     """Construct repositories around exactly one supplied connection."""
 
+    data_feeds: Callable[[Connection], DataFeedRepositoryT]
     instruments: Callable[[Connection], InstrumentRepositoryT]
     ingestion_batches: Callable[[Connection], IngestionBatchRepositoryT]
+    raw_events: Callable[[Connection], RawEventRepositoryT]
     bars: Callable[[Connection], BarRepositoryT]
+    bar_writer: Callable[[Connection], BarWriterRepositoryT]
 
 
 class _Lifecycle(Enum):
@@ -57,14 +83,26 @@ class _Lifecycle(Enum):
     CLOSED = "closed"
 
 
-class SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT]:
-    """One SQLAlchemy connection, one transaction, and three repositories."""
+class SqlAlchemyUnitOfWork[
+    DataFeedRepositoryT,
+    InstrumentRepositoryT,
+    IngestionBatchRepositoryT,
+    RawEventRepositoryT,
+    BarRepositoryT,
+    BarWriterRepositoryT,
+]:
+    """One SQLAlchemy connection, one transaction, and typed repositories."""
 
     def __init__(
         self,
         engine: Engine,
         factories: RepositoryFactories[
-            InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT
+            DataFeedRepositoryT,
+            InstrumentRepositoryT,
+            IngestionBatchRepositoryT,
+            RawEventRepositoryT,
+            BarRepositoryT,
+            BarWriterRepositoryT,
         ],
     ) -> None:
         self._engine = engine
@@ -72,9 +110,12 @@ class SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, Bar
         self._lifecycle = _Lifecycle.NEW
         self._connection: Connection | None = None
         self._transaction: RootTransaction | None = None
+        self._data_feeds: DataFeedRepositoryT | None = None
         self._instruments: InstrumentRepositoryT | None = None
         self._ingestion_batches: IngestionBatchRepositoryT | None = None
+        self._raw_events: RawEventRepositoryT | None = None
         self._bars: BarRepositoryT | None = None
+        self._bar_writer: BarWriterRepositoryT | None = None
 
     def __enter__(self) -> Self:
         if self._lifecycle is not _Lifecycle.NEW:
@@ -88,9 +129,12 @@ class SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, Bar
             # default.  Repositories therefore share that default without a global
             # isolation override.
             transaction = connection.begin()
+            self._data_feeds = self._factories.data_feeds(connection)
             self._instruments = self._factories.instruments(connection)
             self._ingestion_batches = self._factories.ingestion_batches(connection)
+            self._raw_events = self._factories.raw_events(connection)
             self._bars = self._factories.bars(connection)
+            self._bar_writer = self._factories.bar_writer(connection)
         except BaseException:
             if connection.in_transaction():
                 connection.rollback()
@@ -118,16 +162,34 @@ class SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, Bar
         return self._instruments
 
     @property
+    def data_feeds(self) -> DataFeedRepositoryT:
+        self._require_active()
+        assert self._data_feeds is not None
+        return self._data_feeds
+
+    @property
     def ingestion_batches(self) -> IngestionBatchRepositoryT:
         self._require_active()
         assert self._ingestion_batches is not None
         return self._ingestion_batches
 
     @property
+    def raw_events(self) -> RawEventRepositoryT:
+        self._require_active()
+        assert self._raw_events is not None
+        return self._raw_events
+
+    @property
     def bars(self) -> BarRepositoryT:
         self._require_active()
         assert self._bars is not None
         return self._bars
+
+    @property
+    def bar_writer(self) -> BarWriterRepositoryT:
+        self._require_active()
+        assert self._bar_writer is not None
+        return self._bar_writer
 
     def commit(self) -> None:
         """Commit exactly once; repository methods never commit independently."""
@@ -183,32 +245,59 @@ class SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, Bar
             )
 
 
-class SqlAlchemyUnitOfWorkFactory[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT]:
+class SqlAlchemyUnitOfWorkFactory[
+    DataFeedRepositoryT,
+    InstrumentRepositoryT,
+    IngestionBatchRepositoryT,
+    RawEventRepositoryT,
+    BarRepositoryT,
+    BarWriterRepositoryT,
+]:
     """Dependency-injectable creator of independent, single-use Units of Work."""
 
     def __init__(
         self,
         engine: Engine,
         *,
+        data_feeds: Callable[[Connection], DataFeedRepositoryT],
         instruments: Callable[[Connection], InstrumentRepositoryT],
         ingestion_batches: Callable[[Connection], IngestionBatchRepositoryT],
+        raw_events: Callable[[Connection], RawEventRepositoryT],
         bars: Callable[[Connection], BarRepositoryT],
+        bar_writer: Callable[[Connection], BarWriterRepositoryT],
     ) -> None:
         self._engine = engine
         self._factories = RepositoryFactories(
+            data_feeds=data_feeds,
             instruments=instruments,
             ingestion_batches=ingestion_batches,
+            raw_events=raw_events,
             bars=bars,
+            bar_writer=bar_writer,
         )
 
     def create(
         self,
-    ) -> SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT]:
+    ) -> SqlAlchemyUnitOfWork[
+        DataFeedRepositoryT,
+        InstrumentRepositoryT,
+        IngestionBatchRepositoryT,
+        RawEventRepositoryT,
+        BarRepositoryT,
+        BarWriterRepositoryT,
+    ]:
         return SqlAlchemyUnitOfWork(self._engine, self._factories)
 
     def __call__(
         self,
-    ) -> SqlAlchemyUnitOfWork[InstrumentRepositoryT, IngestionBatchRepositoryT, BarRepositoryT]:
+    ) -> SqlAlchemyUnitOfWork[
+        DataFeedRepositoryT,
+        InstrumentRepositoryT,
+        IngestionBatchRepositoryT,
+        RawEventRepositoryT,
+        BarRepositoryT,
+        BarWriterRepositoryT,
+    ]:
         return self.create()
 
 

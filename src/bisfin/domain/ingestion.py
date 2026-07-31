@@ -15,6 +15,13 @@ class IngestionBatchStatus(StrEnum):
     QUARANTINED = "QUARANTINED"
 
 
+class RawEventValidationStatus(StrEnum):
+    PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    QUARANTINED = "QUARANTINED"
+
+
 class IngestionBatch(ImmutableDTO):
     ingestion_batch_id: int
     feed_id: int
@@ -34,6 +41,20 @@ class IngestionBatch(ImmutableDTO):
     metadata: JsonObject = Field(default_factory=dict)
 
 
+class IngestionBatchStartResult(ImmutableDTO):
+    """Outcome of a race-safe request-id start attempt."""
+
+    batch: IngestionBatch
+    created: bool
+
+
+class RawEventIdentity(ImmutableDTO):
+    """The physical composite identity required by the partitioned table."""
+
+    ingested_at: AwareDateTime
+    raw_event_id: int
+
+
 class RawEvent(ImmutableDTO):
     ingested_at: AwareDateTime
     raw_event_id: int
@@ -46,5 +67,12 @@ class RawEvent(ImmutableDTO):
     observed_at: AwareDateTime | None = None
     payload_sha256: str
     raw_payload: JsonObject
-    validation_status: str
+    validation_status: RawEventValidationStatus
     validation_errors: list[object] = Field(default_factory=list)
+
+    @property
+    def identity(self) -> RawEventIdentity:
+        return RawEventIdentity(
+            ingested_at=self.ingested_at,
+            raw_event_id=self.raw_event_id,
+        )

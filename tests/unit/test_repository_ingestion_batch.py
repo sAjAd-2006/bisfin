@@ -121,3 +121,80 @@ def test_failure_payload_removes_basic_authorization_header() -> None:
     assert "YWxpY2U6c2VjcmV0" not in rendered
     assert "authorization=***" in rendered
     assert "upstream rejected request" in rendered
+
+
+def test_request_id_start_returns_existing_without_second_batch() -> None:
+    connection, mock = _connection()
+    insert_result = MagicMock()
+    insert_result.mappings.return_value.one_or_none.return_value = None
+    lookup_result = MagicMock()
+    lookup_result.mappings.return_value.one_or_none.return_value = _batch_row()
+    mock.execute.side_effect = (insert_result, lookup_result)
+
+    outcome = SqlAlchemyIngestionBatchRepository(connection).create_batch_if_absent(
+        feed_id=9,
+        parser_version="parser-v1",
+        request_id="request-17",
+        started_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+
+    assert outcome.created is False
+    assert outcome.batch.ingestion_batch_id == 17
+    assert "ON CONFLICT" in str(mock.execute.call_args_list[0].args[0])
+    mock.commit.assert_not_called()
+
+
+def test_acquisition_update_keeps_batch_running() -> None:
+    connection, mock = _connection()
+    row = _batch_row()
+    row["payload_sha256"] = "a" * 64
+    row["received_row_count"] = 3
+    mock.execute.return_value.mappings.return_value.one_or_none.return_value = row
+
+    batch = SqlAlchemyIngestionBatchRepository(connection).record_acquisition(
+        17,
+        payload_sha256="a" * 64,
+        received_row_count=3,
+        metadata={"http_status": 200},
+    )
+
+    assert batch.status is IngestionBatchStatus.RUNNING
+    assert batch.received_row_count == 3
+
+
+def test_general_finalization_accepts_partial_with_injected_timestamp() -> None:
+    connection, mock = _connection()
+    row = _batch_row("PARTIAL")
+    row["received_row_count"] = 3
+    row["accepted_row_count"] = 2
+    row["rejected_row_count"] = 1
+    mock.execute.return_value.mappings.return_value.one_or_none.return_value = row
+    finished_at = datetime(2026, 1, 1, 1, tzinfo=UTC)
+
+    batch = SqlAlchemyIngestionBatchRepository(connection).finalize_batch(
+        17,
+        status=IngestionBatchStatus.PARTIAL,
+        received_row_count=3,
+        accepted_row_count=2,
+        rejected_row_count=1,
+        error_summary="one row rejected",
+        finished_at=finished_at,
+    )
+
+    assert batch.status is IngestionBatchStatus.PARTIAL
+    assert batch.finished_at == finished_at
+
+
+def test_finalization_rejects_impossible_counts_before_sql() -> None:
+    connection, mock = _connection()
+
+    with pytest.raises(ValueError, match="must not exceed"):
+        SqlAlchemyIngestionBatchRepository(connection).finalize_batch(
+            17,
+            status=IngestionBatchStatus.PARTIAL,
+            received_row_count=1,
+            accepted_row_count=1,
+            rejected_row_count=1,
+        )
+
+    mock.execute.assert_not_called()

@@ -3,9 +3,9 @@
 - نسخه سند: ۱.۰
 - پروفایل اجرایی مرجع: PostgreSQL 16+
 - قرارداد زمانی: UTC در پایگاه داده، منطقه زمانی بازار فقط در Metadata
-DDL مرجع: `db/postgresql/migrations/0001_core_schema.sql`، `db/postgresql/migrations/0002_technical_backtest_completion.sql` و `db/postgresql/migrations/0003_point_in_time_hardening.sql`
+DDL مرجع: `db/postgresql/migrations/0001_core_schema.sql`، `db/postgresql/migrations/0002_technical_backtest_completion.sql`، `db/postgresql/migrations/0003_point_in_time_hardening.sql` و `db/postgresql/migrations/0004_ingestion_runtime_support.sql`
 
-> فاز اجرایی فعلی فقط تکمیل بک‌تست تکنیکال است. Schemaهای ML/DL موجود حفظ شده‌اند، اما تا فاز بعدی توسعه یا بهینه‌سازی نمی‌شوند.
+> فاز اجرایی فعلی علاوه بر زیرساخت بک‌تست، یک Slice محدود ingestion روزانهٔ RAW از BrsApi `type=2` دارد. Schemaهای ML/DL موجود حفظ شده‌اند، اما در این فاز توسعه یا بهینه‌سازی نمی‌شوند.
 
 ---
 
@@ -39,6 +39,12 @@ DDL مرجع: `db/postgresql/migrations/0001_core_schema.sql`، `db/postgresql/m
 - NAV صندوق، کدال، سهامداران، شاخص، ارز، کریپتو و کامودیتی نشان می‌دهد توسعه منابع بیرونی باید از ابتدا دارای `source`, `series`, `event_ts` و `available_at` باشد.
 
 Snapshotهای HTML قرارداد زنده Provider را تضمین نمی‌کنند؛ Raw Zone و Contract Test باید تغییر Schema منبع را آشکار کنند. هیچ API Key موجود در فایل‌های مرجع نباید Credential تولیدی تلقی یا در Migration ثبت شود.
+
+در PR-05 منبع اصلی قرارداد `docs/BrsApiDoc.md` است. این سند فیلدهای Row
+Candlestick را مشخص می‌کند، اما Envelope موفق را نشان نمی‌دهد؛ بنابراین Parser
+فقط قرارداد Fixture پروژه یعنی آرایهٔ غیرخالی Top-level را Fail-closed می‌پذیرد
+و Shape دیگری را حدس نمی‌زند. فقط درخواست `type=2` معتبر است و مقدار `type` داخل
+Row Price Basis را تغییر نمی‌دهد.
 
 ### ۱.۳ لایه‌های داده
 
@@ -232,6 +238,13 @@ Migration `0003` بازه‌های نیمه‌باز `[from,to)` را برای �
 - Microstructure: `trade_tick`, `order_book_snapshot`, `order_book_level`, `order_book_delta`.
 - داده بیرونی: `external.data_series`, `external.observation`, `external.document`.
 
+Slice BrsApi هر Row را با JSON کامل، Hash قطعی و متن اصلی تاریخ/زمان در
+`ingest.raw_event` حفظ می‌کند. Provider/Feed/Instrument/Identifier/Trading Session
+باید از قبل وجود داشته باشند. Session معتبر `REGULAR`، زمان Open/Close Canonical
+Daily Bar را تعیین می‌کند؛ زمان `date/time` Provider Availability نیست. Series
+دقیقاً `RAW`, `1d`, `adjustment_set_id=NULL`, `LAST_TRADE`, `REGULAR` است و
+Correction فقط Revision append-only جدید می‌سازد.
+
 ### ۳.۴ جدول‌های Backtest
 
 - تعریف: `strategy`, `strategy_version`, `run`, `run_instrument`.
@@ -265,6 +278,19 @@ Migration `0003` بازه‌های نیمه‌باز `[from,to)` را برای �
 پارتیشن مستقل `LIST` برای هر نماد ساخته نمی‌شود؛ هزاران نماد باعث Partition Explosion و افزایش Planning Time می‌شوند. الگوی درست `RANGE(time) -> HASH(instrument_id)` است. Hash فقط زمانی فعال می‌شود که اندازه یا Contention هر Leaf آن را توجیه کند. برای Bars ده‌ساله، ۱۲۰ ماه × ۸ Bucket برابر ۹۶۰ Leaf است؛ برای Tick با ۹۰ روز Hot، ۹۰ × ۸ برابر ۷۲۰ Leaf.
 
 Partitionهای آینده باید پیشاپیش ساخته شوند. نبود Partition باید Ingestion را Fail کند تا Timestamp خراب پنهان نشود؛ `DEFAULT PARTITION` در مسیر اصلی توصیه نمی‌شود. Backfill حجیم ابتدا در جدول Standalone با `CHECK` دقیق Range بارگیری و سپس Attach می‌شود.
+
+Migration `0004` برای Runtime تابع
+`ingest.create_raw_event_month_partition(DATE)` را اضافه می‌کند. نام Child
+`raw_event_yYYYYmMM`، مرز ماه UTC و انتهای Range exclusive است. تابع قبل از
+Catalog check یک `pg_advisory_xact_lock` تراکنشی می‌گیرد، Repeat همان ماه No-op
+است و Relation هم‌نامِ متصل‌نشده را Fail می‌کند. Default/List/Hash Partition یا
+Extension نمی‌سازد و به‌دلیل نیاز به Snapshot تازه پس از Lock فقط
+`READ COMMITTED` را می‌پذیرد. Checksum ثبت‌شده آن
+`188080740e805ed9d58de2f4c72a3007b6c46a45e3b253e7f5226d8538a417b7` است.
+
+برای Bar، Migration قبلی تغییر نکرده است: Application ماه‌های Gregorian یکتا را
+مرتب، قفل ماهانه را می‌گیرد و `market.create_bar_month_partition(month, 0)` را
+صدا می‌زند. برای هیچ Symbol پارتیشن LIST ساخته نمی‌شود.
 
 ### ۴.۲ ایندکس‌های دقیق
 
@@ -301,6 +327,13 @@ Partitionهای آینده باید پیشاپیش ساخته شوند. نبود
 5. پس از بستن Lateness Window، `ANALYZE` و BRIN Summarize اجرا شود.
 6. Partition بسته با `VACUUM (ANALYZE, FREEZE)` آماده Archive/Read-mostly شود.
 7. Archive: `DETACH PARTITION`، Export مرتب به Parquet، ثبت URI/Hash/Row Count، تست بازیابی و سپس Drop کنترل‌شده؛ نه `DELETE` میلیاردها ردیف.
+
+در Slice BrsApi، بند چهار به سه Commit کوتاه تفکیک می‌شود: A ساخت Batch
+`RUNNING` پیش از I/O، Fetch بیرون Transaction، B ثبت Hash/Raw acquisition و C
+Canonicalization/Validation/Finalization. این تفکیک عمداً Rawهای Commit‌شده را در
+برابر Failure مرحله Canonical حفظ می‌کند. `available_at=response_received_at` و
+`system_available_at` Clock بلافاصله پیش از Persistence است؛ Correction تاریخی
+به Session Close backdate نمی‌شود.
 
 برای Tick بسیار حجیم، Benchmark جایگزین `NUMERIC(38,18)` با `price_ticks BIGINT` و `quantity_lots BIGINT` را بررسی کند. Scale و Tick Size باید در `instrument_spec_version` نسخه‌بندی شود؛ این Optimization بدون Metadata صحیح خطرناک است.
 
@@ -662,13 +695,15 @@ WHERE dv.dataset_version_id = :dataset_version_id
 
 ### اعتبارسنجی تحویل حاضر
 
-- زنجیره Alembic `0001 -> 0002 -> 0003 (head)` از دیتابیس خالی روی PostgreSQL 16 اجرا و اجرای دوم آن No-op شد؛ هر سه Raw Migration نیز دوباره بدون خطا اعمال شدند.
-- SHA-256 هر شش SQL محافظت‌شده (سه Migration و سه Smoke Test) با مبنای قبل از تغییر یکسان ماند و Migration `0003` در Registry دارای Checksum ثابت است.
+- زنجیره Alembic `0001 -> 0002 -> 0003 -> 0004 (head)` از دیتابیس خالی روی PostgreSQL 16 اجرا و اجرای دوم آن No-op شد؛ هر چهار Raw Migration نیز دوباره بدون خطا اعمال می‌شوند.
+- SHA-256 هر شش SQL محافظت‌شدهٔ `0001` تا `0003` (سه Migration و سه Smoke Test) بدون تغییر می‌ماند. Migration جدید `0004` با Checksum `188080740e805ed9d58de2f4c72a3007b6c46a45e3b253e7f5226d8538a417b7` در Registry ثبت شده است.
 - Smokeهای `0001` و `0002` بدون تغییر اجرا شدند؛ Smoke `0003` تمام حالت‌های Interval سه جدول، دو Replay Mode، Correction دیرهنگام، Bar آینده/غیرنهایی، مرز Range، ورودی نامعتبر و ناامنی `current_bar` را داخل Transaction آزمایش و Rollback کرد.
+- Smoke `0004` ایجاد/تکرار Partition خام، Routing دو مرز ماه، رد ماه ساخته‌نشده و سلامت Index/Constraint را Rollback می‌کند؛ تست واقعی دو Connection انتظار Caller دوم روی Advisory Lock و ایجاد تنها یک Child را اثبات می‌کند.
 - تست واقعی Psycopg با دو اتصال، انتظار Advisory Lock برای کلید مشترک و رد Writer دوم با `23P01`، عبور کلید مستقل و رد Isolation ناسازگار با `0A000` را با Timeout محدود اثبات کرد.
 - `EXPLAIN (ANALYZE, BUFFERS)` برای Public و Actual-system روی پارتیشن نماینده به‌ترتیب Index Scan ایندکس‌های PIT موجود را نشان داد؛ ایندکس تکراری افزوده نشد.
 - حداقل ۷۲ جدول منطقی/پارتیشن‌شده حفظ شد و شمار `invalid_indexes` و `unvalidated_constraints` هر دو صفر باقی ماند.
 - فرمان‌های `make db-migrate` دوبار، `make db-test`, `make db-test-pit`, `make db-reset`, `make migration-check`, `make python-lint` و `make python-test` مسیرهای تکرارپذیر اعتبارسنجی هستند.
+- `make brsapi-test`, `make brsapi-test-integration` و `make brsapi-ingest-fixture` مسیرهای deterministic بدون تماس Live هستند؛ Live target عضو CI نیست.
 
 ### بنیاد برنامهٔ Python و دسترسی Typed (PR-04)
 
@@ -695,7 +730,7 @@ Connection/Transaction را بین سه Repository به اشتراک می‌گذ
 
 Health Check بدون Table Scan سنگین، اتصال، PostgreSQL 16، Alembic head، Schemaهای
 `catalog/ingest/market/backtest/ml`، تابع PIT، Index نامعتبر و Constraint
-تأییدنشده را بررسی می‌کند. سه فرمان زیر تنها عملیات CLI این مرحله هستند:
+تأییدنشده را بررسی می‌کند. فرمان‌های عملیاتی Foundation عبارت‌اند از:
 
 ```bash
 uv run --frozen bisfin config-check
@@ -706,9 +741,20 @@ uv run --frozen bisfin db-current
 تست‌های معمول با `make python-test` به Docker نیاز ندارند. تست‌های Integration با
 `make python-test-integration` روی PostgreSQL 16 واقعی و دیتابیس migrateشده اجرا
 می‌شوند. جزئیات جهت وابستگی، مدیریت Secret، Engine، Error/SQLSTATE، مرزهای
-Repository و محدودیت‌های مرحلهٔ بعد در
-`docs/python_application_architecture_fa.md` ثبت شده است. در PR-04 هیچ تماس BrsApi،
-درج Bar، Migration `0004`، API Server، Worker یا Pipeline ML پیاده‌سازی نشده است.
+Repository در `docs/python_application_architecture_fa.md` ثبت شده است. PR-05 روی
+همین Foundation فقط مسیر BrsApi Candlestick `type=2` را اضافه کرده است:
+
+```bash
+uv run --frozen bisfin ingest brsapi-daily-bars \
+  --symbol فملی \
+  --fixture tests/fixtures/brsapi/candlestick_type2_success.json
+```
+
+Fixture mode بدون Key/Network است. اجرای مستقیم Live با حذف `--fixture` به Secret
+نیاز دارد؛ Make target زنده علاوه بر Secret فقط با Opt-in صریح فعال می‌شود. قرارداد
+Envelope، Unicode/Jalali، A/B/C transaction، Hash، Session، Revision، PIT و
+محدودیت‌ها در `docs/brsapi_daily_bar_ingestion_fa.md` آمده‌اند. API Server، Worker
+و Pipeline ML همچنان پیاده‌سازی نشده‌اند.
 
 ---
 

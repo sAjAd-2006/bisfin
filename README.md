@@ -3,7 +3,7 @@
 Bisfin is a PostgreSQL-first financial-data foundation for deterministic
 backtesting and point-in-time-correct research. The current scope includes:
 
-- an immutable raw-SQL/Alembic migration chain through revision `0003`;
+- an immutable raw-SQL/Alembic migration chain through revision `0004`;
 - catalog, ingestion, revisioned market-bar, snapshot, and backtest storage;
 - audited historical reads through `market.bars_as_of(...)`;
 - a synchronous Python 3.12 application foundation built with Pydantic 2,
@@ -11,11 +11,14 @@ backtesting and point-in-time-correct research. The current scope includes:
 - typed catalog, ingestion, and market-data DTOs and repositories;
 - explicit transaction and Unit of Work boundaries;
 - structured logging, database health checks, and operational CLI commands;
+- an auditable BrsApi `TSETMC/Candlestick.php?type=2` daily RAW-bar ingestion
+  slice with deterministic offline fixtures and optional explicit live mode;
 - database-independent unit tests and real PostgreSQL 16 integration tests.
 
-This release does **not** make BrsApi requests, ingest bars, create instruments,
-run strategies, calculate features, train ML models, or expose an API server.
-Those behaviors remain outside PR-04.
+This release does not ingest adjusted (`type=3`) or intraday (`type=1`) candles,
+auto-create instruments/calendars, schedule jobs, run strategies, calculate
+features, train models, or expose an API server. Hosted CI never contacts
+BrsApi; fixture mode is the reproducible default.
 
 ## Repository structure
 
@@ -27,6 +30,7 @@ Those behaviors remain outside PR-04.
 |   |-- migrations/                       # Immutable registered raw SQL
 |   `-- tests/                            # Transactional SQL smoke tests
 |-- docs/
+|   |-- brsapi_daily_bar_ingestion_fa.md
 |   |-- python_application_architecture_fa.md
 |   `-- trading_database_design_fa.md
 |-- scripts/db/                           # Database lifecycle/check scripts
@@ -35,11 +39,13 @@ Those behaviors remain outside PR-04.
 |   |-- db/                               # Engine, transactions, UoW, health
 |   |-- domain/                           # Frozen persistence-neutral DTOs
 |   |-- logging/                          # Console/JSON structured logging
+|   |-- integrations/brsapi/              # Sync HTTP/fixture contract and parser
+|   |-- ingestion/                        # Daily-bar orchestration and result DTO
 |   |-- repositories/                     # Protocols and SQLAlchemy Core access
 |   |-- schema_contract.py                # Shared packaged Alembic head
 |   `-- cli.py                            # Application composition and CLI
 |-- tests/
-|   |-- fixtures/                         # Isolated fixture helpers
+|   |-- fixtures/brsapi/                  # Sanitized deterministic provider bytes
 |   |-- integration/                      # Real PostgreSQL tests
 |   `-- unit/                             # Infrastructure-free tests
 |-- .env.example                          # Safe local configuration template
@@ -105,7 +111,20 @@ DATABASE_MAX_OVERFLOW
 DATABASE_POOL_TIMEOUT_SECONDS
 DATABASE_STATEMENT_TIMEOUT_MS
 DATABASE_APPLICATION_NAME
+BRSAPI_BASE_URL
+BRSAPI_API_KEY
+BRSAPI_CONNECT_TIMEOUT_SECONDS
+BRSAPI_READ_TIMEOUT_SECONDS
+BRSAPI_USER_AGENT
+BRSAPI_PROVIDER_CODE
+BRSAPI_DAILY_RAW_FEED_CODE
+BRSAPI_IDENTIFIER_TYPE
+BRSAPI_DEFAULT_TIMEZONE
 ```
+
+`BRSAPI_API_KEY` اختیاری و secret-typed است: Fixture mode به آن نیاز ندارد و Live
+mode بدون آن Fail می‌شود. Defaultها، قرارداد Envelope و قواعد Redaction در
+[راهنمای ingestion BrsApi](docs/brsapi_daily_bar_ingestion_fa.md) آمده‌اند.
 
 ## Python and application checks
 
@@ -117,7 +136,7 @@ make python-format-check
 make python-test
 ```
 
-With PostgreSQL already running and migrated through `0003`, run the dedicated
+With PostgreSQL already running and migrated through `0004`, run the dedicated
 integration suite and CLI checks:
 
 ```bash
@@ -134,6 +153,21 @@ uv run --frozen bisfin config-check
 uv run --frozen bisfin db-health
 uv run --frozen bisfin db-current
 ```
+
+Fixture-backed ingestion is network-free:
+
+```bash
+uv run --frozen bisfin ingest brsapi-daily-bars \
+  --symbol فملی \
+  --fixture tests/fixtures/brsapi/candlestick_type2_success.json \
+  --output-format human
+```
+
+The equivalent Make targets are `make brsapi-test`,
+`make brsapi-test-integration`, and `make brsapi-ingest-fixture`. Live mode is
+excluded from every normal check. `make brsapi-ingest-live` requires both
+`BRSAPI_API_KEY` and explicit `BISFIN_RUN_BRSAPI_LIVE_TEST=1` opt-in; invoking the
+CLI directly without `--fixture` is a live request and requires the API key.
 
 `db-health` checks connectivity, PostgreSQL major version 16, the Alembic head,
 the actual required schemas (`catalog`, `ingest`, `market`, `backtest`, `ml`),
@@ -162,9 +196,11 @@ test in this order:
 1. `db/postgresql/migrations/0001_core_schema.sql`
 2. `db/postgresql/migrations/0002_technical_backtest_completion.sql`
 3. `db/postgresql/migrations/0003_point_in_time_hardening.sql`
-4. `db/postgresql/tests/0001_core_smoke.sql`
-5. `db/postgresql/tests/0002_technical_backtest_smoke.sql`
-6. `db/postgresql/tests/0003_point_in_time_hardening_smoke.sql`
+4. `db/postgresql/migrations/0004_ingestion_runtime_support.sql`
+5. `db/postgresql/tests/0001_core_smoke.sql`
+6. `db/postgresql/tests/0002_technical_backtest_smoke.sql`
+7. `db/postgresql/tests/0003_point_in_time_hardening_smoke.sql`
+8. `db/postgresql/tests/0004_ingestion_runtime_support_smoke.sql`
 
 Every `psql` call uses `ON_ERROR_STOP=1`. The smoke fixtures are transactional
 and roll themselves back. `db-test-pit` runs the bounded, two-connection
@@ -189,7 +225,7 @@ The reset script refuses to delete `postgres`, `template0`, or `template1`.
 | `make db-wait` | Wait for an authenticated query. |
 | `make db-migrate` | Upgrade to the registered Alembic head. |
 | `make db-test` | Reapply raw migrations and run SQL smoke tests. |
-| `make db-test-pit` | Run the temporal concurrency integration test. |
+| `make db-test-pit` | Run temporal and raw-partition concurrency tests. |
 | `make db-reset` | Recreate the development DB, migrate, and SQL-test it. |
 | `make db-shell` | Open interactive containerized `psql`. |
 | `make migration-current` | Report the current Alembic revision. |
@@ -199,6 +235,10 @@ The reset script refuses to delete `postgres`, `template0`, or `template1`.
 | `make python-format-check` | Check formatting for `src` and new tests. |
 | `make python-test` | Run only non-integration Python tests. |
 | `make python-test-integration` | Run `tests/integration` against PostgreSQL. |
+| `make brsapi-test` | Run BrsApi/ingestion unit tests without network. |
+| `make brsapi-test-integration` | Run fixture-backed BrsApi PostgreSQL tests. |
+| `make brsapi-ingest-fixture` | Ingest the selected local fixture. |
+| `make brsapi-ingest-live` | Explicitly opt in to one live type=2 request. |
 | `make app-config-check` | Validate and safely summarize settings. |
 | `make app-db-health` | Run the structured DB health check. |
 | `make app-db-current` | Compare current and expected DB revisions. |
@@ -228,6 +268,13 @@ migration `0003` require a fresh snapshot after their advisory lock. Explicit
 `REPEATABLE READ` or `SERIALIZABLE` temporal writes are rejected; unrelated
 read-only transactions may still request those levels.
 
+Migration `0004` adds
+`ingest.create_raw_event_month_partition(DATE)`. It creates deterministic UTC
+monthly children under a transaction advisory lock, has no default partition,
+and also requires `READ COMMITTED` for a fresh post-lock catalog snapshot. Its
+registered SHA-256 is
+`188080740e805ed9d58de2f4c72a3007b6c46a45e3b253e7f5226d8538a417b7`.
+
 Repositories share the one connection owned by a Unit of Work and never commit
 independently. `commit()` is explicit; leaving a Unit of Work without committing,
 or leaving because of an exception, rolls it back.
@@ -237,10 +284,13 @@ or leaving because of an exception, rolls it back.
 The GitHub Actions workflow runs on `ubuntu-24.04` for pushes and pull requests.
 It installs pinned uv and Python 3.12, synchronizes the locked environment, runs
 Ruff/format/mypy/unit tests, starts an empty PostgreSQL 16 database, validates and
-replays migrations through `0003`, executes all SQL and PIT concurrency tests,
-runs the Python integration and CLI checks, resets the database, repeats health
-and integration checks, publishes failure logs, and always removes the stack.
+replays migrations through `0004`, executes all SQL, PIT and partition
+concurrency tests, runs Python/BrsApi integration and fixture CLI checks, resets
+the database, repeats health and ingestion verification, publishes failure logs,
+and always removes the stack. CI contains no API key and makes zero live BrsApi
+requests.
 
-See [the Python architecture guide](docs/python_application_architecture_fa.md),
+See [the BrsApi ingestion guide](docs/brsapi_daily_bar_ingestion_fa.md),
+[the Python architecture guide](docs/python_application_architecture_fa.md),
 [the database design](docs/trading_database_design_fa.md), and
 [the SQL artifact guide](db/postgresql/README.md) for the detailed contracts.

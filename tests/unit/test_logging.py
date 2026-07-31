@@ -59,6 +59,9 @@ def test_context_is_injected_into_json_record() -> None:
         request_id="request-17",
         correlation_id="correlation-4",
         ingestion_batch_id=23,
+        provider_code="BRSAPI",
+        feed_code="TSETMC_CANDLE_DAILY_RAW",
+        symbol="فملی",
         backtest_run_id="run-9",
     ):
         logging.getLogger("bisfin.context").info("contextual")
@@ -67,6 +70,9 @@ def test_context_is_injected_into_json_record() -> None:
     assert record["request_id"] == "request-17"
     assert record["correlation_id"] == "correlation-4"
     assert record["ingestion_batch_id"] == 23
+    assert record["provider_code"] == "BRSAPI"
+    assert record["feed_code"] == "TSETMC_CANDLE_DAILY_RAW"
+    assert record["symbol"] == "فملی"
     assert record["backtest_run_id"] == "run-9"
 
 
@@ -145,3 +151,20 @@ def test_database_url_and_password_assignments_are_redacted() -> None:
     assert password_secret not in output
     assert "[REDACTED_DATABASE_URL]" in output
     assert "password=[REDACTED]" in output
+
+
+def test_brsapi_keyed_urls_and_authorization_are_redacted() -> None:
+    stream = io.StringIO()
+    configure_logging(log_format="json", stream=stream)
+    secret = "provider-key-never-print"
+
+    logging.getLogger("bisfin.secret").error(
+        "request failed url=https://Api.BrsApi.ir/Tsetmc/Candlestick.php?key=%s&type=2 "
+        "authorization=Bearer %s",
+        secret,
+        secret,
+    )
+
+    output = stream.getvalue()
+    assert secret not in output
+    assert "[REDACTED]" in output

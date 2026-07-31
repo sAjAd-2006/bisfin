@@ -2,24 +2,51 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
-from sqlalchemy import case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.engine import Connection, RowMapping
 
 from bisfin.db.errors import IntegrityViolationError, translate_database_errors
-from bisfin.db.tables import instrument, instrument_identifier, instrument_spec_version
+from bisfin.db.tables import (
+    instrument,
+    instrument_identifier,
+    instrument_spec_version,
+    trading_session,
+)
 from bisfin.domain.catalog import (
     Instrument,
     InstrumentIdentifier,
     InstrumentSpecification,
     ResolvedInstrument,
+    SessionResolvedInstrument,
+    TradingSession,
 )
 from bisfin.domain.common import require_aware_datetime
 
 
 def _instrument_from_row(row: RowMapping) -> Instrument:
     return Instrument.model_validate({column.name: row[column.name] for column in instrument.c})
+
+
+def _identifier_columns() -> list[object]:
+    return [
+        (
+            case(
+                (func.isfinite(column), column),
+                else_=None,
+            ).label("identifier_valid_from")
+            if column.name == "valid_from"
+            else column.label(f"identifier_{column.name}")
+        )
+        for column in instrument_identifier.c
+    ]
+
+
+def _identifier_from_row(row: RowMapping) -> InstrumentIdentifier:
+    return InstrumentIdentifier.model_validate(
+        {column.name: row[f"identifier_{column.name}"] for column in instrument_identifier.c}
+    )
 
 
 class SqlAlchemyInstrumentRepository:
@@ -34,6 +61,26 @@ class SqlAlchemyInstrumentRepository:
             row = self._connection.execute(statement).mappings().one_or_none()
         return None if row is None else _instrument_from_row(row)
 
+    def identifier_exists(
+        self,
+        provider_id: int,
+        identifier_type: str,
+        identifier_value: str,
+    ) -> bool:
+        """Report only whether any historical mapping exists; never resolve it."""
+
+        statement = select(
+            select(instrument_identifier.c.provider_id)
+            .where(
+                instrument_identifier.c.provider_id == provider_id,
+                instrument_identifier.c.identifier_type == identifier_type,
+                instrument_identifier.c.identifier_value == identifier_value,
+            )
+            .exists()
+        )
+        with translate_database_errors(operation="check historical identifier existence"):
+            return bool(self._connection.execute(statement).scalar_one())
+
     def find_by_identifier(
         self,
         provider_id: int,
@@ -44,19 +91,8 @@ class SqlAlchemyInstrumentRepository:
         """Resolve one provider identifier using half-open ``[from, to)`` time."""
 
         require_aware_datetime(as_of)
-        identifier_columns = [
-            (
-                case(
-                    (func.isfinite(column), column),
-                    else_=None,
-                ).label("identifier_valid_from")
-                if column.name == "valid_from"
-                else column.label(f"identifier_{column.name}")
-            )
-            for column in instrument_identifier.c
-        ]
         statement = (
-            select(*instrument.c, *identifier_columns)
+            select(*instrument.c, *_identifier_columns())
             .select_from(
                 instrument_identifier.join(
                     instrument,
@@ -91,12 +127,77 @@ class SqlAlchemyInstrumentRepository:
             return None
 
         row = rows[0]
-        identifier = InstrumentIdentifier.model_validate(
-            {column.name: row[f"identifier_{column.name}"] for column in instrument_identifier.c}
-        )
         return ResolvedInstrument(
             instrument=_instrument_from_row(row),
-            identifier=identifier,
+            identifier=_identifier_from_row(row),
+        )
+
+    def find_by_identifier_for_regular_session(
+        self,
+        provider_id: int,
+        identifier_type: str,
+        identifier_value: str,
+        trading_date: date,
+    ) -> SessionResolvedInstrument | None:
+        """Resolve identifier validity at the canonical regular-session open.
+
+        Joining the session is intentional: resolving at an invented UTC
+        midnight would be incorrect around symbol changes and would create a
+        circular dependency between the instrument venue and its session.
+        """
+
+        session_columns = [column.label(f"session_{column.name}") for column in trading_session.c]
+        statement = (
+            select(*instrument.c, *_identifier_columns(), *session_columns)
+            .select_from(
+                instrument_identifier.join(
+                    instrument,
+                    instrument.c.instrument_id == instrument_identifier.c.instrument_id,
+                ).join(
+                    trading_session,
+                    and_(
+                        trading_session.c.venue_id == instrument.c.venue_id,
+                        trading_session.c.trading_date == trading_date,
+                        trading_session.c.session_code == "REGULAR",
+                    ),
+                )
+            )
+            .where(
+                instrument_identifier.c.provider_id == provider_id,
+                instrument_identifier.c.identifier_type == identifier_type,
+                instrument_identifier.c.identifier_value == identifier_value,
+                trading_session.c.session_open_ts.is_not(None),
+                instrument_identifier.c.valid_from <= trading_session.c.session_open_ts,
+                or_(
+                    instrument_identifier.c.valid_to.is_(None),
+                    instrument_identifier.c.valid_to > trading_session.c.session_open_ts,
+                ),
+            )
+            .order_by(
+                instrument_identifier.c.valid_from.desc(),
+                instrument_identifier.c.instrument_id.asc(),
+            )
+            .limit(2)
+        )
+        operation = "resolve historical instrument at regular session open"
+        with translate_database_errors(operation=operation):
+            rows = self._connection.execute(statement).mappings().all()
+        if len(rows) > 1:
+            raise IntegrityViolationError(
+                "Multiple session-valid identifiers violate the temporal catalog contract.",
+                operation=operation,
+            )
+        if not rows:
+            return None
+
+        row = rows[0]
+        session = TradingSession.model_validate(
+            {column.name: row[f"session_{column.name}"] for column in trading_session.c}
+        )
+        return SessionResolvedInstrument(
+            instrument=_instrument_from_row(row),
+            identifier=_identifier_from_row(row),
+            trading_session=session,
         )
 
     def get_active_spec(

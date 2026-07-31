@@ -14,6 +14,12 @@ class ReplayMode(StrEnum):
     ACTUAL_SYSTEM_REPLAY = "ACTUAL_SYSTEM_REPLAY"
 
 
+class BarRevisionWriteStatus(StrEnum):
+    INSERTED = "INSERTED"
+    CORRECTED = "CORRECTED"
+    UNCHANGED = "UNCHANGED"
+
+
 class BarSeries(ImmutableDTO):
     bar_series_id: int
     feed_id: int
@@ -51,6 +57,37 @@ class BarRevision(ImmutableDTO):
     ingestion_batch_id: int
     recorded_at: AwareDateTime
     previous_close_price: Decimal | None = None
+
+
+class BarRevisionCandidate(ImmutableDTO):
+    """Canonical financial values proposed for one append-only bar revision."""
+
+    bar_open_ts: AwareDateTime
+    bar_series_id: int
+    available_at: AwareDateTime
+    system_available_at: AwareDateTime
+    bar_close_ts: AwareDateTime
+    trading_date: date
+    open_price: Decimal
+    high_price: Decimal
+    low_price: Decimal
+    close_price: Decimal
+    official_close_price: Decimal | None = None
+    settlement_price: Decimal | None = None
+    volume: Decimal | None = None
+    quote_volume: Decimal | None = None
+    trade_count: int | None = None
+    vwap: Decimal | None = None
+    open_interest: Decimal | None = None
+    is_final: bool = True
+    quality_flags: int = 0
+    ingestion_batch_id: int
+    previous_close_price: Decimal | None = None
+
+
+class BarRevisionWriteResult(ImmutableDTO):
+    status: BarRevisionWriteStatus
+    revision: BarRevision
 
 
 class PointInTimeBar(BarRevision):

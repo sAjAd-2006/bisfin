@@ -39,12 +39,24 @@ def engine() -> Iterator[Engine]:
         database.dispose()
 
 
-def _factory(engine: Engine) -> SqlAlchemyUnitOfWorkFactory[_Repository, _Repository, _Repository]:
+def _factory(
+    engine: Engine,
+) -> SqlAlchemyUnitOfWorkFactory[
+    _Repository,
+    _Repository,
+    _Repository,
+    _Repository,
+    _Repository,
+    _Repository,
+]:
     return SqlAlchemyUnitOfWorkFactory(
         engine,
+        data_feeds=_Repository,
         instruments=_Repository,
         ingestion_batches=_Repository,
+        raw_events=_Repository,
         bars=_Repository,
+        bar_writer=_Repository,
     )
 
 
@@ -56,8 +68,11 @@ def _values(engine: Engine) -> list[str]:
 def test_repositories_share_one_connection_and_explicit_commit(engine: Engine) -> None:
     with _factory(engine)() as unit_of_work:
         assert unit_of_work.instruments.connection is unit_of_work.connection
+        assert unit_of_work.data_feeds.connection is unit_of_work.connection
         assert unit_of_work.ingestion_batches.connection is unit_of_work.connection
+        assert unit_of_work.raw_events.connection is unit_of_work.connection
         assert unit_of_work.bars.connection is unit_of_work.connection
+        assert unit_of_work.bar_writer.connection is unit_of_work.connection
         unit_of_work.bars.add("committed")
         unit_of_work.commit()
 

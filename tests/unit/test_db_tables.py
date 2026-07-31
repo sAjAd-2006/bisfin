@@ -9,6 +9,9 @@ from bisfin.db.tables import MAPPED_TABLES, bar_revision, data_provider, metadat
 def test_only_required_physical_tables_are_mapped() -> None:
     assert {table.fullname for table in MAPPED_TABLES} == {
         "catalog.data_provider",
+        "catalog.data_feed",
+        "catalog.timeframe",
+        "catalog.trading_session",
         "catalog.instrument",
         "catalog.instrument_identifier",
         "catalog.instrument_spec_version",

@@ -1,0 +1,7 @@
+{
+  "code_http": 429,
+  "successful": false,
+  "status": "error",
+  "message_error": "محدودیت درخواست آزمایشی",
+  "diagnostic_code": "FIXTURE_RATE_LIMIT"
+}

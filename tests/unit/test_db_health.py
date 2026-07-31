@@ -24,7 +24,7 @@ class _Result:
 
 
 class _Connection:
-    def __init__(self, *, revision: str = "0003", pit_exists: bool = True) -> None:
+    def __init__(self, *, revision: str = "0004", pit_exists: bool = True) -> None:
         self.revision = revision
         self.pit_exists = pit_exists
         self.closed = False
@@ -71,8 +71,8 @@ class _Engine:
 
 def _checker(
     *,
-    revision: str = "0003",
-    expected_revision: str = "0003",
+    revision: str = "0004",
+    expected_revision: str = "0004",
     pit_exists: bool = True,
 ) -> tuple[DatabaseHealthChecker, _Connection]:
     connection = _Connection(revision=revision, pit_exists=pit_exists)
@@ -86,7 +86,7 @@ def test_healthy_report_is_structured_and_concise() -> None:
 
     assert report.healthy is True
     assert report.failed_checks == ()
-    assert report.current_revision == "0003"
+    assert report.current_revision == "0004"
     assert report.postgresql_major_version == 16
     assert report.summary().startswith("healthy: PostgreSQL 16 reachable")
     assert connection.closed is True
@@ -100,7 +100,7 @@ def test_revision_mismatch_is_a_named_failure() -> None:
     assert report.healthy is False
     assert check.healthy is False
     assert check.details == {
-        "expected_revision": "0003",
+        "expected_revision": "0004",
         "current_revisions": ("0002",),
     }
     assert "alembic_revision" in report.summary()

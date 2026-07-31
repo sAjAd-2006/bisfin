@@ -147,6 +147,12 @@ def test_registry_has_the_exact_canonical_order() -> None:
             "db/postgresql/migrations/0003_point_in_time_hardening.sql",
             "04e6ab36f457de807202ddd0b619b813f01a627693582c19a2a1ac50a5331c3a",
         ),
+        (
+            "0004",
+            "0003",
+            "db/postgresql/migrations/0004_ingestion_runtime_support.sql",
+            "188080740e805ed9d58de2f4c72a3007b6c46a45e3b253e7f5226d8538a417b7",
+        ),
     )
 
 
@@ -158,7 +164,7 @@ def test_registry_rejects_out_of_order_migrations() -> None:
         )
 
 
-@pytest.mark.parametrize("revision", ("0001", "0002", "0003"))
+@pytest.mark.parametrize("revision", ("0001", "0002", "0003", "0004"))
 def test_each_revision_rejects_downgrade(revision: str) -> None:
     config = Config(str(REPOSITORY_ROOT / "alembic.ini"))
     script_directory = ScriptDirectory.from_config(config)

@@ -114,9 +114,12 @@ class _AssetRepository:
 def test_unit_of_work_controls_cross_transaction_visibility(db_engine: Engine) -> None:
     factory = SqlAlchemyUnitOfWorkFactory(
         db_engine,
+        data_feeds=_AssetRepository,
         instruments=_AssetRepository,
         ingestion_batches=_AssetRepository,
+        raw_events=_AssetRepository,
         bars=_AssetRepository,
+        bar_writer=_AssetRepository,
     )
     committed_code = _asset_code("UOWCOMMIT")
     rolled_back_code = _asset_code("UOWROLLBACK")

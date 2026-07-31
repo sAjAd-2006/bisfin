@@ -1,0 +1,51 @@
+[
+  {
+    "l18": "فملی",
+    "type": 2,
+    "count": 4,
+    "date": "1403/11/30",
+    "time": "12:30",
+    "open": 7000,
+    "high": 7200,
+    "low": 6900,
+    "close": 7100,
+    "volume": 10000000
+  },
+  {
+    "l18": "فملی",
+    "type": 2,
+    "count": 4,
+    "date": "1403/12/01",
+    "time": "12:30",
+    "open": 7100,
+    "high": 7300,
+    "low": 7050,
+    "close": 7250,
+    "volume": -1
+  },
+  {
+    "l18": "فملی",
+    "type": 2,
+    "count": 4,
+    "date": "1403/12/02",
+    "time": "25:61",
+    "open": 7400,
+    "high": 7200,
+    "low": 7300,
+    "close": 7250,
+    "volume": 9000000
+  },
+  {
+    "l18": "فولاد",
+    "type": 2,
+    "count": 4,
+    "date": "1403/13/01",
+    "time": null,
+    "open": true,
+    "high": 7200,
+    "low": 7000,
+    "close": 7100,
+    "volume": "NaN",
+    "unknown_rejected_field": "همچنان در raw حفظ می‌شود"
+  }
+]
