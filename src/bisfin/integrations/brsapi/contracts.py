@@ -82,6 +82,25 @@ class BrsApiCandlestickRow:
 
 
 @dataclass(frozen=True, slots=True)
+class BrsApiSymbolMetadata:
+    """Catalog-relevant fields from one strict Symbol.php object response."""
+
+    original_symbol: str
+    normalized_symbol: str
+    isin: str
+    market: str
+    name_fa: str | None
+    name_en: str | None
+    market_board: str | None
+    industry: str | None
+    date_update: str | None
+    source_time: str | None
+    state: str | None
+    response_sha256: str
+    raw_payload: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
 class ParsedDailyBarCandidate:
     """Side-effect-free normalized candidate awaiting catalog resolution."""
 

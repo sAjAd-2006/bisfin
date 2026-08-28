@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "calendar_id": "tse-explicit-holidays-pr06-v1",
+  "venue_code": "TSE",
+  "timezone": "Asia/Tehran",
+  "date_from": "2025-03-19",
+  "date_to": "2025-03-22",
+  "sessions": [
+    {
+      "trading_date": "2025-03-19",
+      "session_code": "REGULAR",
+      "is_trading_day": true,
+      "open_local_time": "09:00:00",
+      "close_local_time": "12:30:00",
+      "source_status": "DECLARED_OPEN"
+    },
+    {
+      "trading_date": "2025-03-20",
+      "session_code": "REGULAR",
+      "is_trading_day": false,
+      "open_local_time": null,
+      "close_local_time": null,
+      "source_status": "DECLARED_HOLIDAY"
+    },
+    {
+      "trading_date": "2025-03-21",
+      "session_code": "REGULAR",
+      "is_trading_day": false,
+      "open_local_time": null,
+      "close_local_time": null,
+      "source_status": "DECLARED_HOLIDAY"
+    },
+    {
+      "trading_date": "2025-03-22",
+      "session_code": "REGULAR",
+      "is_trading_day": false,
+      "open_local_time": null,
+      "close_local_time": null,
+      "source_status": "DECLARED_HOLIDAY"
+    }
+  ]
+}

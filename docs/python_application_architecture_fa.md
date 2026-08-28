@@ -394,3 +394,10 @@ make app-config-check app-db-health app-db-current
 PR بعدی می‌تواند Calendar/Symbol-master provisioning یا Worker زمان‌بندی‌شده با
 Retry/Rate-limit صریح را هدف بگیرد. Candle تعدیل‌شده فقط پس از قرارداد مستقل
 Corporate Action/Adjustment قابل افزودن است.
+
+## PR-06: Bootstrap و Calendar صریح
+
+PR-06 کاتالوگ و تقویم را با فایل‌های JSON نسخه‌دار و Repositoryهای جدید
+`catalog_writer` و `trading_calendar` تأمین می‌کند. Parsing و Symbol fixture/live
+خارج از تراکنش هستند؛ نوشتن temporal کاتالوگ با `READ COMMITTED` انجام می‌شود.
+جزئیات عملیاتی در `catalog_bootstrap_fa.md` و `trading_calendar_import_fa.md` است.

@@ -342,3 +342,9 @@
 - `market.create_technical_month_partitions(month, hash_buckets)`: Partition همان ماه را برای Bar، Tape، Snapshot/Level/Delta دفتر سفارش، Quote و حقیقی/حقوقی یکجا می‌سازد.
 
 ورودی NULL تابع `bars_as_of` با `22004`، Range/Mode/Cutoff نامعتبر یا Adjustment آینده‌دان با `22023` و Series ناشناخته با `P0002` رد می‌شود. برای Replay ترتیبی، cutoff هر فراخوانی باید `LEAST(decision_ts, snapshot.knowledge_cutoff_ts)` باشد؛ یک cutoff انتهای Run ممکن است Correctionهای دیرهنگام را برای تصمیم‌های قدیمی آشکار کند.
+
+## PR-06: داده‌های bootstrap
+
+Catalog manifest rows در `ingest.ingestion_batch` و `ingest.raw_event` audit می‌شوند.
+هر `trading_session` از فایل تقویم صریح با timezone IANA ساخته شده و session موجود
+فقط در صورت تطابق کامل unchanged است؛ conflict هرگز overwrite نمی‌شود.

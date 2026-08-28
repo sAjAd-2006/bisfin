@@ -2,10 +2,14 @@
 
 from bisfin.integrations.brsapi.client import (
     BRSAPI_CANDLESTICK_PATH,
+    BRSAPI_SYMBOL_PATH,
     BRSAPI_UNADJUSTED_DAILY_TYPE,
     BrsApiClient,
+    BrsApiSymbolClient,
     FixtureBrsApiClient,
+    FixtureBrsApiSymbolClient,
     HttpxBrsApiClient,
+    HttpxBrsApiSymbolClient,
 )
 from bisfin.integrations.brsapi.contracts import (
     BrsApiCandlestickResponse,
@@ -19,6 +23,7 @@ from bisfin.integrations.brsapi.contracts import (
     BrsApiNoDataResponse,
     BrsApiProviderError,
     BrsApiRawResponse,
+    BrsApiSymbolMetadata,
     BrsApiTimeoutError,
     BrsApiTransportError,
     DailyBarParseResult,
@@ -40,13 +45,16 @@ from bisfin.integrations.brsapi.parser import (
     response_payload_sha256,
     row_payload_sha256,
 )
+from bisfin.integrations.brsapi.symbol import parse_symbol_metadata
 
 __all__ = [
     "BRSAPI_CANDLESTICK_PATH",
+    "BRSAPI_SYMBOL_PATH",
     "BRSAPI_UNADJUSTED_DAILY_TYPE",
     "BrsApiCandlestickResponse",
     "BrsApiCandlestickRow",
     "BrsApiClient",
+    "BrsApiSymbolClient",
     "BrsApiConfigurationError",
     "BrsApiContractError",
     "BrsApiError",
@@ -56,11 +64,14 @@ __all__ = [
     "BrsApiNoDataResponse",
     "BrsApiProviderError",
     "BrsApiRawResponse",
+    "BrsApiSymbolMetadata",
     "BrsApiTimeoutError",
     "BrsApiTransportError",
     "DailyBarParseResult",
     "FixtureBrsApiClient",
+    "FixtureBrsApiSymbolClient",
     "HttpxBrsApiClient",
+    "HttpxBrsApiSymbolClient",
     "ParsedDailyBarCandidate",
     "RowValidationCode",
     "RowValidationIssue",
@@ -71,6 +82,7 @@ __all__ = [
     "parse_candlestick_envelope",
     "parse_jalali_date",
     "parse_source_time",
+    "parse_symbol_metadata",
     "parse_unadjusted_daily_candles",
     "response_payload_sha256",
     "row_payload_sha256",

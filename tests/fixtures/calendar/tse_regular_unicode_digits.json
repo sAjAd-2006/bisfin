@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "calendar_id": "tse-unicode-digits-pr06-v1",
+  "venue_code": "TSE",
+  "timezone": "Asia/Tehran",
+  "date_from": "۲۰۲۵-۰۲-۱۸",
+  "date_to": "٢٠٢٥-٠٢-١٨",
+  "sessions": [
+    {
+      "trading_date": "۲۰۲۵-۰۲-۱۸",
+      "session_code": "REGULAR",
+      "is_trading_day": true,
+      "open_local_time": "۰۹:۰۰:۰۰",
+      "close_local_time": "١٢:٣٠:٠٠",
+      "source_status": "اعلام‌شده-باز"
+    }
+  ]
+}

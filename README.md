@@ -13,10 +13,12 @@ backtesting and point-in-time-correct research. The current scope includes:
 - structured logging, database health checks, and operational CLI commands;
 - an auditable BrsApi `TSETMC/Candlestick.php?type=2` daily RAW-bar ingestion
   slice with deterministic offline fixtures and optional explicit live mode;
+- deterministic, versioned catalog bootstrap and explicit trading-calendar import
+  workflows that remove the manual prerequisite seed for fixture-backed PR-05;
 - database-independent unit tests and real PostgreSQL 16 integration tests.
 
 This release does not ingest adjusted (`type=3`) or intraday (`type=1`) candles,
-auto-create instruments/calendars, schedule jobs, run strategies, calculate
+auto-discover instruments/calendars, schedule jobs, run strategies, calculate
 features, train models, or expose an API server. Hosted CI never contacts
 BrsApi; fixture mode is the reproducible default.
 
@@ -118,8 +120,13 @@ BRSAPI_READ_TIMEOUT_SECONDS
 BRSAPI_USER_AGENT
 BRSAPI_PROVIDER_CODE
 BRSAPI_DAILY_RAW_FEED_CODE
+BRSAPI_SYMBOL_FEED_CODE
 BRSAPI_IDENTIFIER_TYPE
 BRSAPI_DEFAULT_TIMEZONE
+BISFIN_PROVIDER_CODE
+BISFIN_CATALOG_FEED_CODE
+BISFIN_CALENDAR_FEED_CODE
+CATALOG_DEFAULT_VALIDATION_MODE
 ```
 
 `BRSAPI_API_KEY` اختیاری و secret-typed است: Fixture mode به آن نیاز ندارد و Live
@@ -168,6 +175,20 @@ The equivalent Make targets are `make brsapi-test`,
 excluded from every normal check. `make brsapi-ingest-live` requires both
 `BRSAPI_API_KEY` and explicit `BISFIN_RUN_BRSAPI_LIVE_TEST=1` opt-in; invoking the
 CLI directly without `--fixture` is a live request and requires the API key.
+
+Catalog and calendar files are strict JSON contracts; their unknown fields and
+duplicate JSON keys are rejected. BrsApi Symbol is deliberately used only for a
+manifest-listed symbol, never as a bulk symbol-master endpoint. Read the Persian
+guides [catalog bootstrap](docs/catalog_bootstrap_fa.md) and
+[calendar import](docs/trading_calendar_import_fa.md), then run:
+
+```bash
+make catalog-validate-fixture
+make catalog-bootstrap-fixture
+make calendar-validate-fixture
+make calendar-import-fixture
+make bootstrap-e2e-fixture
+```
 
 `db-health` checks connectivity, PostgreSQL major version 16, the Alembic head,
 the actual required schemas (`catalog`, `ingest`, `market`, `backtest`, `ml`),

@@ -48,6 +48,8 @@ def _factory(
     _Repository,
     _Repository,
     _Repository,
+    _Repository,
+    _Repository,
 ]:
     return SqlAlchemyUnitOfWorkFactory(
         engine,
@@ -57,6 +59,8 @@ def _factory(
         raw_events=_Repository,
         bars=_Repository,
         bar_writer=_Repository,
+        catalog_writer=_Repository,
+        trading_calendar=_Repository,
     )
 
 
@@ -73,6 +77,8 @@ def test_repositories_share_one_connection_and_explicit_commit(engine: Engine) -
         assert unit_of_work.raw_events.connection is unit_of_work.connection
         assert unit_of_work.bars.connection is unit_of_work.connection
         assert unit_of_work.bar_writer.connection is unit_of_work.connection
+        assert unit_of_work.catalog_writer.connection is unit_of_work.connection
+        assert unit_of_work.trading_calendar.connection is unit_of_work.connection
         unit_of_work.bars.add("committed")
         unit_of_work.commit()
 

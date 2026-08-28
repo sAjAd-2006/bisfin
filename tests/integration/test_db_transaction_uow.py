@@ -120,6 +120,8 @@ def test_unit_of_work_controls_cross_transaction_visibility(db_engine: Engine) -
         raw_events=_AssetRepository,
         bars=_AssetRepository,
         bar_writer=_AssetRepository,
+        catalog_writer=_AssetRepository,
+        trading_calendar=_AssetRepository,
     )
     committed_code = _asset_code("UOWCOMMIT")
     rolled_back_code = _asset_code("UOWROLLBACK")

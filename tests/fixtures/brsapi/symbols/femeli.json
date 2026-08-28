@@ -1,0 +1,26 @@
+{
+  "date_update": "1404-05-30",
+  "time": "12:30:00",
+  "state": "مجاز",
+  "l18": "فملی",
+  "l30": "ملی صنایع مس ایران",
+  "l30_en": "National Iranian Copper Industries Co.",
+  "isin": "IRO1MSMI0001",
+  "m": "بورس",
+  "m_board": "بازار اول",
+  "cs": "فلزات اساسی",
+  "pc": 12345,
+  "pe": 7.25,
+  "assembly": [
+    {
+      "title": "اطلاعیه آزمایشی",
+      "published": false
+    }
+  ],
+  "depth": {
+    "bid": {
+      "price": 12340,
+      "count": 2
+    }
+  }
+}

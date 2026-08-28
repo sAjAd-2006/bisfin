@@ -60,6 +60,11 @@ jobs:
       - name: Run focused BrsApi fixture unit tests
         run: make brsapi-test
 
+      - name: Run catalog and calendar unit tests
+        run: |
+          make catalog-test
+          make calendar-test
+
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
@@ -105,6 +110,16 @@ jobs:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make brsapi-test-integration
 
+      - name: Run deterministic catalog, calendar, and daily-bar fixture flow
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: |
+          make catalog-validate-fixture
+          make catalog-bootstrap-fixture
+          make calendar-validate-fixture
+          make calendar-import-fixture
+          make bootstrap-e2e-fixture
+
       - name: Run fixture-backed BrsApi CLI end to end
         env:
           BISFIN_RUN_DB_INTEGRATION: "1"
@@ -135,6 +150,7 @@ jobs:
           make db-test-pit
           make python-test-integration
           make brsapi-test-integration
+          make bootstrap-e2e-fixture
           uv run --frozen pytest -m integration tests/integration/test_brsapi_ingestion.py::test_cli_fixture_mode_end_to_end
 
       - name: Show PostgreSQL logs on failure

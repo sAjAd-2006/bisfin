@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "manifest_id": "iran-equities-unicode-symbol-001",
+  "generated_at": "2026-08-07T00:00:00+00:00",
+  "source": "bisfin-curated-فارسی",
+  "providers": [{"provider_code": "BRSAPI", "display_name": "BrsApi", "provider_kind": "VENDOR", "base_url": "https://BrsApi.ir/Api", "default_timezone": "Asia/Tehran", "metadata": {}}],
+  "feeds": [],
+  "currencies": [{"currency_code": "IRR", "display_name": "Iranian rial", "minor_unit": 0, "is_fiat": true, "metadata": {}}],
+  "asset_types": [{"asset_type_code": "EQUITY", "display_name": "Equity", "description": null}],
+  "venues": [{"venue_code": "TSE", "display_name": "Tehran Stock Exchange", "mic_code": "XTEH", "country_code": "IR", "timezone_name": "Asia/Tehran", "base_currency_code": "IRR", "metadata": {}}],
+  "timeframes": [{"timeframe_code": "1d", "display_name": "1 trading session", "duration_seconds": null, "calendar_unit": "SESSION", "session_aligned": true}],
+  "provider_market_mappings": [{"provider_code": "BRSAPI", "provider_market": "بورس", "venue_code": "TSE"}],
+  "instruments": [
+    {"stable_key": "tse-iro1kimi0007", "provider_code": "BRSAPI", "provider_symbol": "  كيميا   ۰۰۷  ", "isin": " iro1kimi0007 ", "name_fa": "شرکت کیمیا", "name_en": "Kimia Co.", "asset_type_code": "EQUITY", "venue_code": "TSE", "currency_code": "IRR", "status": "ACTIVE", "active_from": "2026-03-21T00:00:00+00:00", "active_to": null, "identifier_valid_from": "2026-03-21T00:00:00+00:00", "spec_effective_from": "2026-03-21T00:00:00+00:00", "previous_symbol": null, "rename_effective_from": null, "price_tick": "1.00", "quantity_step": "1", "lot_size": "1", "contract_multiplier": "1", "price_scale": 2, "quantity_scale": 0, "lower_price_limit": null, "upper_price_limit": null, "shares_outstanding": null, "metadata": {"original_note": "شناسهٔ نمونه با صفر آغازین"}}
+  ]
+}

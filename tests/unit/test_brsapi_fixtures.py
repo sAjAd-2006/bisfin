@@ -16,6 +16,12 @@ _EXPECTED = {
     "candlestick_type2_partial_invalid.json",
     "candlestick_type2_provider_error.json",
     "candlestick_type2_success.json",
+    "symbol_isin_mismatch.json",
+    "symbol_malformed_json.txt",
+    "symbol_market_mismatch.json",
+    "symbol_name_changed.json",
+    "symbol_provider_error.json",
+    "symbol_success.json",
 }
 
 
@@ -40,5 +46,18 @@ def test_json_fixtures_are_valid_and_contain_no_credentials_or_private_headers()
 
 
 def test_malformed_fixture_is_intentionally_not_json() -> None:
-    with pytest.raises(json.JSONDecodeError):
-        json.loads((_DIRECTORY / "candlestick_malformed_json.txt").read_text(encoding="utf-8"))
+    for name in ("candlestick_malformed_json.txt", "symbol_malformed_json.txt"):
+        with pytest.raises(json.JSONDecodeError):
+            json.loads((_DIRECTORY / name).read_text(encoding="utf-8"))
+
+
+def test_symbol_fixture_index_contains_only_local_secret_free_paths() -> None:
+    symbol_directory = _DIRECTORY / "symbols"
+    index = json.loads((symbol_directory / "index.json").read_text(encoding="utf-8"))
+
+    assert index == {"schema_version": 1, "symbols": {"فملی": "femeli.json"}}
+    for relative_path in index["symbols"].values():
+        path = Path(relative_path)
+        assert not path.is_absolute()
+        assert ".." not in path.parts
+        assert (symbol_directory / path).is_file()

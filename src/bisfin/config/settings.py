@@ -103,6 +103,33 @@ class Settings(BaseSettings):
         max_length=96,
         validation_alias="BRSAPI_DAILY_RAW_FEED_CODE",
     )
+    brsapi_symbol_feed_code: str = Field(
+        default="TSETMC_SYMBOL_METADATA",
+        min_length=1,
+        max_length=96,
+        validation_alias="BRSAPI_SYMBOL_FEED_CODE",
+    )
+    bisfin_provider_code: str = Field(
+        default="BISFIN",
+        min_length=1,
+        max_length=64,
+        validation_alias="BISFIN_PROVIDER_CODE",
+    )
+    bisfin_catalog_feed_code: str = Field(
+        default="BISFIN_CATALOG_MANIFEST",
+        min_length=1,
+        max_length=96,
+        validation_alias="BISFIN_CATALOG_FEED_CODE",
+    )
+    bisfin_calendar_feed_code: str = Field(
+        default="BISFIN_TRADING_CALENDAR",
+        min_length=1,
+        max_length=96,
+        validation_alias="BISFIN_CALENDAR_FEED_CODE",
+    )
+    catalog_default_validation_mode: Literal[
+        "manifest-only", "fixture-validate", "live-validate"
+    ] = Field(default="manifest-only", validation_alias="CATALOG_DEFAULT_VALIDATION_MODE")
     brsapi_identifier_type: str = Field(
         default="BRSAPI_L18",
         min_length=1,
@@ -148,6 +175,10 @@ class Settings(BaseSettings):
         "brsapi_user_agent",
         "brsapi_provider_code",
         "brsapi_daily_raw_feed_code",
+        "brsapi_symbol_feed_code",
+        "bisfin_provider_code",
+        "bisfin_catalog_feed_code",
+        "bisfin_calendar_feed_code",
         "brsapi_identifier_type",
         "brsapi_default_timezone",
     )
@@ -233,6 +264,11 @@ class Settings(BaseSettings):
             "brsapi_user_agent": self.brsapi_user_agent,
             "brsapi_provider_code": self.brsapi_provider_code,
             "brsapi_daily_raw_feed_code": self.brsapi_daily_raw_feed_code,
+            "brsapi_symbol_feed_code": self.brsapi_symbol_feed_code,
+            "bisfin_provider_code": self.bisfin_provider_code,
+            "bisfin_catalog_feed_code": self.bisfin_catalog_feed_code,
+            "bisfin_calendar_feed_code": self.bisfin_calendar_feed_code,
+            "catalog_default_validation_mode": self.catalog_default_validation_mode,
             "brsapi_identifier_type": self.brsapi_identifier_type,
             "brsapi_default_timezone": self.brsapi_default_timezone,
             "brsapi_api_key_configured": "yes" if self.brsapi_api_key else "no",

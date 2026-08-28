@@ -5,6 +5,7 @@ from sqlalchemy.engine import Engine
 from bisfin.db.unit_of_work import SqlAlchemyUnitOfWorkFactory
 from bisfin.repositories.bar_repository import SqlAlchemyBarRepository
 from bisfin.repositories.bar_writer_repository import SqlAlchemyBarWriterRepository
+from bisfin.repositories.catalog_writer_repository import SqlAlchemyCatalogWriterRepository
 from bisfin.repositories.data_feed_repository import SqlAlchemyDataFeedRepository
 from bisfin.repositories.ingestion_batch_repository import (
     SqlAlchemyIngestionBatchRepository,
@@ -19,6 +20,7 @@ from bisfin.repositories.protocols import (
     RawEventRepository,
 )
 from bisfin.repositories.raw_event_repository import SqlAlchemyRawEventRepository
+from bisfin.repositories.trading_calendar_repository import SqlAlchemyTradingCalendarRepository
 
 
 def create_unit_of_work_factory(
@@ -30,6 +32,8 @@ def create_unit_of_work_factory(
     SqlAlchemyRawEventRepository,
     SqlAlchemyBarRepository,
     SqlAlchemyBarWriterRepository,
+    SqlAlchemyCatalogWriterRepository,
+    SqlAlchemyTradingCalendarRepository,
 ]:
     """Wire all concrete repositories around each Unit of Work connection."""
 
@@ -41,6 +45,8 @@ def create_unit_of_work_factory(
         raw_events=SqlAlchemyRawEventRepository,
         bars=SqlAlchemyBarRepository,
         bar_writer=SqlAlchemyBarWriterRepository,
+        catalog_writer=SqlAlchemyCatalogWriterRepository,
+        trading_calendar=SqlAlchemyTradingCalendarRepository,
     )
 
 
@@ -53,9 +59,11 @@ __all__ = [
     "RawEventRepository",
     "SqlAlchemyBarRepository",
     "SqlAlchemyBarWriterRepository",
+    "SqlAlchemyCatalogWriterRepository",
     "SqlAlchemyDataFeedRepository",
     "SqlAlchemyIngestionBatchRepository",
     "SqlAlchemyInstrumentRepository",
     "SqlAlchemyRawEventRepository",
+    "SqlAlchemyTradingCalendarRepository",
     "create_unit_of_work_factory",
 ]

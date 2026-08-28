@@ -358,3 +358,9 @@ PR بعدی باید فقط پس از مشاهدهٔ قرارداد واقعی P
 شود؛ گزینه‌های منطقی، مدیریت Calendar/Symbol master و Worker زمان‌بندی‌شده با Retry
 صریح و Rate-limit-aware هستند. افزودن `type=3` نیازمند قرارداد Adjustment و
 Corporate Action مستقل است و نباید با RAW series ادغام شود.
+
+## PR-06 و Symbol.php
+
+`Symbol.php` فقط برای validate/enrich یک symbol از manifest به‌کار می‌رود؛ endpoint
+bulk یا discovery نیست. Fixture mode بدون کلید است و CI هیچ درخواست live ندارد.
+جزئیات authority و raw audit در `catalog_bootstrap_fa.md` ثبت شده است.

@@ -47,12 +47,14 @@ from bisfin.integrations.brsapi.contracts import JsonObject
 from bisfin.repositories import create_unit_of_work_factory
 from bisfin.repositories.bar_repository import SqlAlchemyBarRepository
 from bisfin.repositories.bar_writer_repository import SqlAlchemyBarWriterRepository
+from bisfin.repositories.catalog_writer_repository import SqlAlchemyCatalogWriterRepository
 from bisfin.repositories.data_feed_repository import SqlAlchemyDataFeedRepository
 from bisfin.repositories.ingestion_batch_repository import (
     SqlAlchemyIngestionBatchRepository,
 )
 from bisfin.repositories.instrument_repository import SqlAlchemyInstrumentRepository
 from bisfin.repositories.raw_event_repository import SqlAlchemyRawEventRepository
+from bisfin.repositories.trading_calendar_repository import SqlAlchemyTradingCalendarRepository
 
 _FIXTURES = Path("tests/fixtures/brsapi")
 _SYMBOL = "\u0641\u0645\u0644\u06cc"
@@ -825,6 +827,8 @@ def test_canonicalization_failure_keeps_transaction_b_raw_rows(
             raw_events=SqlAlchemyRawEventRepository,
             bars=SqlAlchemyBarRepository,
             bar_writer=_FailingBarWriter,
+            catalog_writer=SqlAlchemyCatalogWriterRepository,
+            trading_calendar=SqlAlchemyTradingCalendarRepository,
         )
         request_id = unique_code("CANONICAL_FAILURE")
         service = BrsApiDailyBarIngestionService(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
@@ -26,6 +27,7 @@ from bisfin.integrations.brsapi.normalization import normalize_brsapi_symbol
 
 BRSAPI_CANDLESTICK_PATH = "Tsetmc/Candlestick.php"
 BRSAPI_UNADJUSTED_DAILY_TYPE = "2"
+BRSAPI_SYMBOL_PATH = "Tsetmc/Symbol.php"
 
 _SAFE_RESPONSE_HEADERS = frozenset(
     {
@@ -46,6 +48,12 @@ class BrsApiClient(Protocol):
     """Only the explicitly scoped type=2 operation is publicly available."""
 
     def fetch_unadjusted_daily_candles(self, symbol: str) -> BrsApiRawResponse: ...
+
+
+class BrsApiSymbolClient(Protocol):
+    """The documented per-symbol metadata operation; no discovery surface exists."""
+
+    def fetch_symbol_metadata(self, symbol: str) -> BrsApiRawResponse: ...
 
 
 class HttpxBrsApiClient:
@@ -86,58 +94,66 @@ class HttpxBrsApiClient:
         if not normalized_symbol:
             raise BrsApiConfigurationError("BrsApi symbol must not be empty.")
 
-        secret = self._api_key.get_secret_value().strip()
-        if not secret:
-            raise BrsApiConfigurationError("BRSAPI_API_KEY is required for live mode.")
-
-        started_at = self._clock()
-        monotonic_started = self._monotonic_clock()
-        timeout = httpx.Timeout(
-            connect=self._connect_timeout,
-            read=self._read_timeout,
-            write=self._read_timeout,
-            pool=self._connect_timeout,
+        return _fetch_raw_response(
+            base_url=self._base_url,
+            api_key=self._api_key,
+            connect_timeout=self._connect_timeout,
+            read_timeout=self._read_timeout,
+            user_agent=self._user_agent,
+            clock=self._clock,
+            monotonic_clock=self._monotonic_clock,
+            transport=self._transport,
+            path=BRSAPI_CANDLESTICK_PATH,
+            params={"type": BRSAPI_UNADJUSTED_DAILY_TYPE, "l18": normalized_symbol},
         )
-        try:
-            with httpx.Client(
-                base_url=self._base_url,
-                timeout=timeout,
-                transport=self._transport,
-                headers={"Accept": "application/json", "User-Agent": self._user_agent},
-                follow_redirects=False,
-            ) as client:
-                response = client.get(
-                    BRSAPI_CANDLESTICK_PATH,
-                    params={
-                        "key": secret,
-                        "type": BRSAPI_UNADJUSTED_DAILY_TYPE,
-                        "l18": normalized_symbol,
-                    },
-                )
-                body_bytes = response.content
-        except httpx.TimeoutException as error:
-            _scrub_httpx_exception(error, secret=secret)
-            raise BrsApiTimeoutError("BrsApi request timed out.") from error
-        except httpx.TransportError as error:
-            _scrub_httpx_exception(error, secret=secret)
-            raise BrsApiTransportError("BrsApi transport request failed.") from error
 
-        received_at = self._clock()
-        elapsed_seconds = self._monotonic_clock() - monotonic_started
-        raw_response = BrsApiRawResponse(
-            status_code=response.status_code,
-            headers=_capture_safe_headers(response.headers, secret=secret),
-            body_bytes=body_bytes,
-            request_started_at=started_at,
-            response_received_at=received_at,
-            elapsed=timedelta(seconds=max(0.0, elapsed_seconds)),
+
+class HttpxBrsApiSymbolClient:
+    """Synchronous live client for the documented single-symbol endpoint."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        api_key: SecretStr,
+        connect_timeout_seconds: float,
+        read_timeout_seconds: float,
+        user_agent: str,
+        clock: Clock | None = None,
+        monotonic_clock: MonotonicClock | None = None,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        self._base_url = _validate_base_url(base_url)
+        self._api_key = api_key
+        self._connect_timeout = _positive_finite(
+            connect_timeout_seconds,
+            field="connect_timeout_seconds",
         )
-        try:
-            response.raise_for_status()
-        except httpx.HTTPStatusError as error:
-            _scrub_httpx_exception(error, secret=secret)
-            raise BrsApiHttpError(response.status_code, response=raw_response) from error
-        return raw_response
+        self._read_timeout = _positive_finite(
+            read_timeout_seconds,
+            field="read_timeout_seconds",
+        )
+        self._user_agent = _require_user_agent(user_agent)
+        self._clock = clock or _utc_now
+        self._monotonic_clock = monotonic_clock or time.monotonic
+        self._transport = transport
+
+    def fetch_symbol_metadata(self, symbol: str) -> BrsApiRawResponse:
+        normalized_symbol = normalize_brsapi_symbol(symbol)
+        if not normalized_symbol:
+            raise BrsApiConfigurationError("BrsApi symbol must not be empty.")
+        return _fetch_raw_response(
+            base_url=self._base_url,
+            api_key=self._api_key,
+            connect_timeout=self._connect_timeout,
+            read_timeout=self._read_timeout,
+            user_agent=self._user_agent,
+            clock=self._clock,
+            monotonic_clock=self._monotonic_clock,
+            transport=self._transport,
+            path=BRSAPI_SYMBOL_PATH,
+            params={"l18": normalized_symbol},
+        )
 
 
 class FixtureBrsApiClient:
@@ -171,6 +187,152 @@ class FixtureBrsApiClient:
             response_received_at=received_at,
             elapsed=received_at - started_at,
         )
+
+
+class FixtureBrsApiSymbolClient:
+    """Indexed, traversal-safe, network-free Symbol.php fixture client."""
+
+    def __init__(self, fixture_directory: str | Path, *, clock: Clock | None = None) -> None:
+        self._directory = Path(fixture_directory)
+        self._clock = clock or _utc_now
+        self._paths = _load_symbol_fixture_index(self._directory)
+
+    def fetch_symbol_metadata(self, symbol: str) -> BrsApiRawResponse:
+        normalized_symbol = normalize_brsapi_symbol(symbol)
+        if not normalized_symbol:
+            raise BrsApiConfigurationError("BrsApi symbol must not be empty.")
+        path = self._paths.get(normalized_symbol)
+        if path is None:
+            raise BrsApiFixtureError("BrsApi Symbol fixture is not indexed for this symbol.")
+        started_at = self._clock()
+        try:
+            body_bytes = path.read_bytes()
+            body_bytes.decode("utf-8", errors="strict")
+        except (OSError, UnicodeDecodeError) as error:
+            raise BrsApiFixtureError("BrsApi Symbol fixture could not be read as UTF-8.") from error
+        received_at = self._clock()
+        return BrsApiRawResponse(
+            status_code=200,
+            headers=(
+                ("content-type", "application/json; charset=utf-8"),
+                ("x-bisfin-source", "deterministic-fixture"),
+            ),
+            body_bytes=body_bytes,
+            request_started_at=started_at,
+            response_received_at=received_at,
+            elapsed=received_at - started_at,
+        )
+
+
+def _require_user_agent(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        raise BrsApiConfigurationError("BrsApi User-Agent must not be empty.")
+    return normalized
+
+
+def _fetch_raw_response(
+    *,
+    base_url: str,
+    api_key: SecretStr,
+    connect_timeout: float,
+    read_timeout: float,
+    user_agent: str,
+    clock: Clock,
+    monotonic_clock: MonotonicClock,
+    transport: httpx.BaseTransport | None,
+    path: str,
+    params: dict[str, str],
+) -> BrsApiRawResponse:
+    secret = api_key.get_secret_value().strip()
+    if not secret:
+        raise BrsApiConfigurationError("BRSAPI_API_KEY is required for live mode.")
+    started_at = clock()
+    monotonic_started = monotonic_clock()
+    timeout = httpx.Timeout(
+        connect=connect_timeout,
+        read=read_timeout,
+        write=read_timeout,
+        pool=connect_timeout,
+    )
+    try:
+        with httpx.Client(
+            base_url=base_url,
+            timeout=timeout,
+            transport=transport,
+            headers={"Accept": "application/json", "User-Agent": user_agent},
+            follow_redirects=False,
+        ) as client:
+            response = client.get(path, params={"key": secret, **params})
+            body_bytes = response.content
+    except httpx.TimeoutException as error:
+        _scrub_httpx_exception(error, secret=secret)
+        raise BrsApiTimeoutError("BrsApi request timed out.") from error
+    except httpx.TransportError as error:
+        _scrub_httpx_exception(error, secret=secret)
+        raise BrsApiTransportError("BrsApi transport request failed.") from error
+    received_at = clock()
+    raw_response = BrsApiRawResponse(
+        status_code=response.status_code,
+        headers=_capture_safe_headers(response.headers, secret=secret),
+        body_bytes=body_bytes,
+        request_started_at=started_at,
+        response_received_at=received_at,
+        elapsed=timedelta(seconds=max(0.0, monotonic_clock() - monotonic_started)),
+    )
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        _scrub_httpx_exception(error, secret=secret)
+        raise BrsApiHttpError(response.status_code, response=raw_response) from error
+    return raw_response
+
+
+def _duplicate_key_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate object key")
+        result[key] = value
+    return result
+
+
+def _load_symbol_fixture_index(directory: Path) -> dict[str, Path]:
+    try:
+        payload = json.loads(
+            (directory / "index.json").read_bytes().decode("utf-8", errors="strict"),
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
+            object_pairs_hook=_duplicate_key_object,
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise BrsApiFixtureError("BrsApi Symbol fixture index is invalid.") from error
+    if (
+        not isinstance(payload, dict)
+        or set(payload) != {"schema_version", "symbols"}
+        or type(payload["schema_version"]) is not int
+        or payload["schema_version"] != 1
+        or not isinstance(payload["symbols"], dict)
+    ):
+        raise BrsApiFixtureError("BrsApi Symbol fixture index is invalid.")
+    result: dict[str, Path] = {}
+    for raw_symbol, raw_relative in payload["symbols"].items():
+        if not isinstance(raw_symbol, str) or not isinstance(raw_relative, str):
+            raise BrsApiFixtureError("BrsApi Symbol fixture index is invalid.")
+        normalized_symbol = normalize_brsapi_symbol(raw_symbol)
+        relative = Path(raw_relative)
+        if (
+            not normalized_symbol
+            or normalized_symbol in result
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or relative.suffix != ".json"
+        ):
+            raise BrsApiFixtureError("BrsApi Symbol fixture index is unsafe.")
+        candidate = directory / relative
+        if not candidate.is_file():
+            raise BrsApiFixtureError("BrsApi Symbol fixture file is missing.")
+        result[normalized_symbol] = candidate
+    return result
 
 
 def _validate_base_url(value: str) -> str:
@@ -242,8 +404,12 @@ def _utc_now() -> datetime:
 
 __all__ = [
     "BRSAPI_CANDLESTICK_PATH",
+    "BRSAPI_SYMBOL_PATH",
     "BRSAPI_UNADJUSTED_DAILY_TYPE",
     "BrsApiClient",
+    "BrsApiSymbolClient",
     "FixtureBrsApiClient",
+    "FixtureBrsApiSymbolClient",
     "HttpxBrsApiClient",
+    "HttpxBrsApiSymbolClient",
 ]

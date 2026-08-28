@@ -12,6 +12,12 @@ from typing import Protocol, TextIO
 from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 
+from bisfin.calendar import load_calendar_manifest, validate_calendar_manifest
+from bisfin.calendar.importer import TradingCalendarImportService
+from bisfin.calendar.results import CalendarImportResult
+from bisfin.catalog import load_catalog_manifest
+from bisfin.catalog.bootstrap import CatalogBootstrapService, CatalogValidationMode
+from bisfin.catalog.results import CatalogBootstrapResult
 from bisfin.config import Settings, get_settings
 from bisfin.db.engine import create_engine, dispose_engine
 from bisfin.db.errors import BisfinError, redact_secrets
@@ -24,7 +30,9 @@ from bisfin.integrations.brsapi import (
     BrsApiConfigurationError,
     BrsApiError,
     FixtureBrsApiClient,
+    FixtureBrsApiSymbolClient,
     HttpxBrsApiClient,
+    HttpxBrsApiSymbolClient,
 )
 from bisfin.logging import configure_logging
 from bisfin.repositories import create_unit_of_work_factory
@@ -68,6 +76,35 @@ def build_parser() -> argparse.ArgumentParser:
         default="human",
         help="bounded secret-free result format",
     )
+    catalog = subcommands.add_parser("catalog", help="validate or bootstrap an explicit catalog")
+    catalog_commands = catalog.add_subparsers(dest="catalog_command", required=True)
+    catalog_validate = catalog_commands.add_parser("validate", help="validate a catalog JSON file")
+    catalog_validate.add_argument("--manifest", type=Path, required=True)
+    catalog_bootstrap = catalog_commands.add_parser(
+        "bootstrap", help="bootstrap only the manifest-listed instruments"
+    )
+    catalog_bootstrap.add_argument("--manifest", type=Path, required=True)
+    catalog_bootstrap.add_argument(
+        "--validation-mode",
+        choices=tuple(mode.value for mode in CatalogValidationMode),
+        default=None,
+    )
+    catalog_bootstrap.add_argument("--symbol-fixture-dir", type=Path)
+    catalog_bootstrap.add_argument("--request-id")
+    catalog_bootstrap.add_argument("--output-format", choices=("human", "json"), default="human")
+
+    calendar = subcommands.add_parser("calendar", help="validate or import an explicit calendar")
+    calendar_commands = calendar.add_subparsers(dest="calendar_command", required=True)
+    calendar_validate = calendar_commands.add_parser(
+        "validate", help="validate a calendar JSON file"
+    )
+    calendar_validate.add_argument("--file", type=Path, required=True)
+    calendar_import = calendar_commands.add_parser(
+        "import", help="import an explicit calendar JSON"
+    )
+    calendar_import.add_argument("--file", type=Path, required=True)
+    calendar_import.add_argument("--request-id")
+    calendar_import.add_argument("--output-format", choices=("human", "json"), default="human")
     return parser
 
 
@@ -104,6 +141,42 @@ def run(
             print(f"{key}={value}", file=stdout)
         return 0
 
+    if arguments.command == "catalog" and arguments.catalog_command == "validate":
+        try:
+            document = load_catalog_manifest(arguments.manifest)
+        except (OSError, ValueError) as error:
+            print(f"catalog: invalid ({redact_secrets(error)})", file=stderr)
+            return 2
+        _print_json_or_human(
+            {
+                "manifest_id": document.manifest.manifest_id,
+                "payload_sha256": document.payload_sha256,
+                "instruments": len(document.manifest.instruments),
+            },
+            output_format="human",
+            prefix="catalog: valid",
+            stdout=stdout,
+        )
+        return 0
+
+    if arguments.command == "calendar" and arguments.calendar_command == "validate":
+        try:
+            validated = validate_calendar_manifest(load_calendar_manifest(arguments.file))
+        except (OSError, ValueError) as error:
+            print(f"calendar: invalid ({redact_secrets(error)})", file=stderr)
+            return 2
+        _print_json_or_human(
+            {
+                "calendar_id": validated.document.manifest.calendar_id,
+                "payload_sha256": validated.document.payload_sha256,
+                "sessions": len(validated.sessions),
+            },
+            output_format="human",
+            prefix="calendar: valid",
+            stdout=stdout,
+        )
+        return 0
+
     if arguments.command == "ingest":
         configure_logging(
             level=settings.log_level,
@@ -137,6 +210,54 @@ def run(
         if result.status is IngestionBatchStatus.PARTIAL:
             return 3
         return 4
+
+    if arguments.command in {"catalog", "calendar"}:
+        configure_logging(
+            level=settings.log_level,
+            log_format=settings.log_format,
+            environment=settings.environment,
+            application=settings.application,
+        )
+        operation_engine: Engine | None = None
+        catalog_result: CatalogBootstrapResult | CalendarImportResult
+        try:
+            operation_engine = engine_factory(settings)
+            factory = create_unit_of_work_factory(operation_engine)
+            if arguments.command == "catalog":
+                document = load_catalog_manifest(arguments.manifest)
+                mode = CatalogValidationMode(
+                    arguments.validation_mode or settings.catalog_default_validation_mode
+                )
+                client = _symbol_client(arguments, settings, mode)
+                catalog_result = CatalogBootstrapService(
+                    unit_of_work_factory=factory.create_temporal_write
+                ).bootstrap(
+                    document,
+                    validation_mode=mode,
+                    symbol_client=client,
+                    request_id=arguments.request_id,
+                )
+            else:
+                validated = validate_calendar_manifest(load_calendar_manifest(arguments.file))
+                catalog_result = TradingCalendarImportService(
+                    unit_of_work_factory=factory
+                ).import_calendar(
+                    validated,
+                    request_id=arguments.request_id,
+                )
+        except (BisfinError, ValueError, OSError) as error:
+            print(f"{arguments.command}: failed ({redact_secrets(error)})", file=stderr)
+            return 4
+        finally:
+            if operation_engine is not None:
+                dispose_engine(operation_engine)
+        _print_json_or_human(
+            catalog_result.model_dump(mode="json"),
+            output_format=arguments.output_format,
+            prefix=f"{arguments.command}: {catalog_result.status.value.lower()}",
+            stdout=stdout,
+        )
+        return 0 if catalog_result.status is IngestionBatchStatus.SUCCEEDED else 3
 
     configure_logging(
         level=settings.log_level,
@@ -209,6 +330,46 @@ def _run_brsapi_daily_ingestion(
     finally:
         if engine is not None:
             dispose_engine(engine)
+
+
+def _symbol_client(
+    arguments: argparse.Namespace,
+    settings: Settings,
+    mode: CatalogValidationMode,
+) -> FixtureBrsApiSymbolClient | HttpxBrsApiSymbolClient | None:
+    if mode is CatalogValidationMode.MANIFEST_ONLY:
+        return None
+    if mode is CatalogValidationMode.FIXTURE_VALIDATE:
+        if arguments.symbol_fixture_dir is None:
+            raise ValueError("fixture-validate requires --symbol-fixture-dir")
+        return FixtureBrsApiSymbolClient(arguments.symbol_fixture_dir)
+    if settings.brsapi_api_key is None or not settings.brsapi_api_key.get_secret_value().strip():
+        raise BrsApiConfigurationError("BRSAPI_API_KEY is required for live mode.")
+    return HttpxBrsApiSymbolClient(
+        base_url=settings.brsapi_base_url,
+        api_key=settings.brsapi_api_key,
+        connect_timeout_seconds=settings.brsapi_connect_timeout_seconds,
+        read_timeout_seconds=settings.brsapi_read_timeout_seconds,
+        user_agent=settings.brsapi_user_agent,
+    )
+
+
+def _print_json_or_human(
+    value: dict[str, object],
+    *,
+    output_format: str,
+    prefix: str,
+    stdout: TextIO,
+) -> None:
+    if output_format == "json":
+        print(
+            json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            file=stdout,
+        )
+        return
+    print(prefix, file=stdout)
+    for key, item in value.items():
+        print(f"{key}={item}", file=stdout)
 
 
 def _print_ingestion_result(

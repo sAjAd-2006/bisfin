@@ -21,7 +21,6 @@ DEFAULT_ISOLATION_LEVEL: Final[IsolationLevel] = "READ COMMITTED"
 _SUPPORTED_ISOLATION_LEVELS: Final[frozenset[str]] = frozenset(
     {"READ COMMITTED", "READ UNCOMMITTED", "REPEATABLE READ", "SERIALIZABLE"}
 )
-_STALE_SNAPSHOT_LEVELS: Final[frozenset[str]] = frozenset({"REPEATABLE READ", "SERIALIZABLE"})
 
 
 def _normalize_isolation_level(isolation_level: str) -> IsolationLevel:
@@ -56,7 +55,7 @@ class TransactionManager:
         """
 
         normalized = _normalize_isolation_level(isolation_level)
-        if temporal_write and normalized in _STALE_SNAPSHOT_LEVELS:
+        if temporal_write and normalized != DEFAULT_ISOLATION_LEVEL:
             raise UnsupportedDatabaseOperationError(
                 "Temporal catalog writes require READ COMMITTED isolation.",
                 sqlstate="0A000",

@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "calendar_id": "tse-invalid-hours-pr06-v1",
+  "venue_code": "TSE",
+  "timezone": "Asia/Tehran",
+  "date_from": "2025-02-18",
+  "date_to": "2025-02-18",
+  "sessions": [
+    {
+      "trading_date": "2025-02-18",
+      "session_code": "REGULAR",
+      "is_trading_day": true,
+      "open_local_time": "12:30:00",
+      "close_local_time": "09:00:00",
+      "source_status": "DECLARED_OPEN"
+    }
+  ]
+}

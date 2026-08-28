@@ -8,6 +8,20 @@ from pydantic import Field
 from bisfin.domain.common import AwareDateTime, ImmutableDTO, JsonObject
 
 
+class Currency(ImmutableDTO):
+    currency_code: str
+    display_name: str
+    minor_unit: int
+    is_fiat: bool
+    metadata: JsonObject = Field(default_factory=dict)
+
+
+class AssetType(ImmutableDTO):
+    asset_type_code: str
+    display_name: str
+    description: str | None = None
+
+
 class Provider(ImmutableDTO):
     provider_id: int
     provider_code: str
@@ -39,6 +53,17 @@ class Timeframe(ImmutableDTO):
     duration_seconds: int | None = None
     calendar_unit: str
     session_aligned: bool
+
+
+class Venue(ImmutableDTO):
+    venue_id: int
+    venue_code: str
+    display_name: str
+    mic_code: str | None = None
+    country_code: str | None = None
+    timezone_name: str
+    base_currency_code: str | None = None
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class TradingSession(ImmutableDTO):

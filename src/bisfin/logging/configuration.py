@@ -23,6 +23,10 @@ _CONTEXT_FIELDS = (
     "provider_code",
     "feed_code",
     "symbol",
+    "manifest_id",
+    "calendar_id",
+    "venue_code",
+    "instrument_stable_key",
     "backtest_run_id",
 )
 _log_context: ContextVar[LogContext] = ContextVar("bisfin_log_context", default={})
@@ -60,6 +64,10 @@ def bind_log_context(
     provider_code: str | None = None,
     feed_code: str | None = None,
     symbol: str | None = None,
+    manifest_id: str | None = None,
+    calendar_id: str | None = None,
+    venue_code: str | None = None,
+    instrument_stable_key: str | None = None,
     backtest_run_id: int | str | None = None,
 ) -> Token[LogContext]:
     """Merge supplied correlation fields into this context and return a reset token."""
@@ -73,6 +81,10 @@ def bind_log_context(
             "provider_code": provider_code,
             "feed_code": feed_code,
             "symbol": symbol,
+            "manifest_id": manifest_id,
+            "calendar_id": calendar_id,
+            "venue_code": venue_code,
+            "instrument_stable_key": instrument_stable_key,
             "backtest_run_id": backtest_run_id,
         }.items()
         if value is not None
@@ -107,6 +119,10 @@ def log_context(
     provider_code: str | None = None,
     feed_code: str | None = None,
     symbol: str | None = None,
+    manifest_id: str | None = None,
+    calendar_id: str | None = None,
+    venue_code: str | None = None,
+    instrument_stable_key: str | None = None,
     backtest_run_id: int | str | None = None,
 ) -> Iterator[None]:
     """Bind correlation fields and always restore the previous context."""
@@ -118,6 +134,10 @@ def log_context(
         provider_code=provider_code,
         feed_code=feed_code,
         symbol=symbol,
+        manifest_id=manifest_id,
+        calendar_id=calendar_id,
+        venue_code=venue_code,
+        instrument_stable_key=instrument_stable_key,
         backtest_run_id=backtest_run_id,
     )
     try:

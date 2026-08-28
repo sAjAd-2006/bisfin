@@ -783,3 +783,9 @@ Envelope، Unicode/Jalali، A/B/C transaction، Hash، Session، Revision، PIT 
 - [BigQuery: Primary and Foreign Keys](https://docs.cloud.google.com/bigquery/docs/primary-foreign-keys)
 - [Snowflake: Micro-partitions and Clustering](https://docs.snowflake.com/en/user-guide/tables-clustering-micropartitions)
 - [MySQL 8.4: Partitioning Limitations](https://dev.mysql.com/doc/refman/8.4/en/partitioning-limitations.html)
+
+## PR-06: prerequisiteهای manifest-driven
+
+`catalog.instrument_identifier` و `catalog.instrument_spec_version` تاریخچه‌های
+append-only هستند. PR-06 آن‌ها و `catalog.trading_session` را با manifest صریح
+و بدون migration جدید پر می‌کند؛ تعطیلات و ساعت جلسه inference نمی‌شوند.

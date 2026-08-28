@@ -7,7 +7,9 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from bisfin.domain import (
+    AssetType,
     BarRevision,
+    Currency,
     Instrument,
     InstrumentIdentifier,
     InstrumentSpecification,
@@ -16,6 +18,7 @@ from bisfin.domain import (
     RawEventValidationStatus,
     ReplayMode,
     ResolvedInstrument,
+    Venue,
 )
 
 pytestmark = pytest.mark.unit
@@ -164,6 +167,35 @@ def test_instrument_specification_uses_decimal_and_aware_effective_time() -> Non
 
     assert specification.price_tick == Decimal("0.000000000000000001")
     assert specification.contract_multiplier == Decimal("1000.000000000000000000")
+
+
+def test_catalog_reference_dtos_match_existing_schema_without_persistence_behavior() -> None:
+    currency = Currency(
+        currency_code="IRR",
+        display_name="Iranian rial",
+        minor_unit=0,
+        is_fiat=True,
+        metadata={"source": "manifest"},
+    )
+    asset_type = AssetType(
+        asset_type_code="EQUITY",
+        display_name="Equity",
+        description=None,
+    )
+    venue = Venue(
+        venue_id=1,
+        venue_code="TSE",
+        display_name="Tehran Stock Exchange",
+        mic_code="XTEH",
+        country_code="IR",
+        timezone_name="Asia/Tehran",
+        base_currency_code="IRR",
+        metadata={"calendar": "explicit"},
+    )
+
+    assert currency.minor_unit == 0
+    assert asset_type.description is None
+    assert venue.timezone_name == "Asia/Tehran"
 
 
 def test_raw_event_serialization_preserves_external_text_without_implicit_secrets() -> None:

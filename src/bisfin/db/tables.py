@@ -38,6 +38,28 @@ NAMING_CONVENTION = {
 metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
 
+currency = Table(
+    "currency",
+    metadata,
+    Column("currency_code", VARCHAR(12), primary_key=True, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("minor_unit", SmallInteger, nullable=False, server_default=text("2")),
+    Column("is_fiat", Boolean, nullable=False, server_default=text("true")),
+    Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
+    schema="catalog",
+)
+
+
+asset_type = Table(
+    "asset_type",
+    metadata,
+    Column("asset_type_code", VARCHAR(32), primary_key=True, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("description", Text, nullable=True),
+    schema="catalog",
+)
+
+
 data_provider = Table(
     "data_provider",
     metadata,
@@ -93,6 +115,32 @@ data_feed = Table(
     Column("active_to", TIMESTAMP(timezone=True, precision=6), nullable=True),
     Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     UniqueConstraint("provider_id", "feed_code"),
+    schema="catalog",
+)
+
+
+venue = Table(
+    "venue",
+    metadata,
+    Column(
+        "venue_id",
+        SmallInteger,
+        Identity(always=True),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("venue_code", VARCHAR(32), nullable=False, unique=True),
+    Column("display_name", Text, nullable=False),
+    Column("mic_code", VARCHAR(8), nullable=True),
+    Column("country_code", CHAR(2), nullable=True),
+    Column("timezone_name", VARCHAR(64), nullable=False),
+    Column(
+        "base_currency_code",
+        VARCHAR(12),
+        ForeignKey("catalog.currency.currency_code"),
+        nullable=True,
+    ),
+    Column("metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")),
     schema="catalog",
 )
 
@@ -446,8 +494,11 @@ bar_revision = Table(
 
 
 MAPPED_TABLES = (
+    currency,
+    asset_type,
     data_provider,
     data_feed,
+    venue,
     timeframe,
     trading_session,
     instrument,
@@ -462,10 +513,12 @@ MAPPED_TABLES = (
 __all__ = [
     "MAPPED_TABLES",
     "NAMING_CONVENTION",
+    "asset_type",
     "bar_revision",
     "bar_series",
     "data_feed",
     "data_provider",
+    "currency",
     "ingestion_batch",
     "instrument",
     "instrument_identifier",
@@ -475,4 +528,5 @@ __all__ = [
     "raw_event",
     "timeframe",
     "trading_session",
+    "venue",
 ]

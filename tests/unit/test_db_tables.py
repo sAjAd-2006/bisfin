@@ -3,13 +3,24 @@
 from sqlalchemy import BigInteger, Boolean, Date, Integer, Numeric, SmallInteger, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP, VARCHAR
 
-from bisfin.db.tables import MAPPED_TABLES, bar_revision, data_provider, metadata
+from bisfin.db.tables import (
+    MAPPED_TABLES,
+    asset_type,
+    bar_revision,
+    currency,
+    data_provider,
+    metadata,
+    venue,
+)
 
 
 def test_only_required_physical_tables_are_mapped() -> None:
     assert {table.fullname for table in MAPPED_TABLES} == {
+        "catalog.currency",
+        "catalog.asset_type",
         "catalog.data_provider",
         "catalog.data_feed",
+        "catalog.venue",
         "catalog.timeframe",
         "catalog.trading_session",
         "catalog.instrument",
@@ -22,6 +33,9 @@ def test_only_required_physical_tables_are_mapped() -> None:
     }
     assert set(metadata.tables) == {table.fullname for table in MAPPED_TABLES}
     assert data_provider.name == "data_provider"
+    assert currency.c.currency_code.primary_key is True
+    assert asset_type.c.asset_type_code.primary_key is True
+    assert venue.c.venue_code.unique is True
 
 
 def test_bar_revision_columns_preserve_financial_types_and_primary_key() -> None:

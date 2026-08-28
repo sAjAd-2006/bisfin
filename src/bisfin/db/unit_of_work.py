@@ -22,6 +22,8 @@ class UnitOfWork[
     RawEventRepositoryT,
     BarRepositoryT,
     BarWriterRepositoryT,
+    CatalogWriterRepositoryT,
+    TradingCalendarRepositoryT,
 ](Protocol):
     """Small application-facing contract for explicit atomic work."""
 
@@ -42,6 +44,12 @@ class UnitOfWork[
 
     @property
     def bar_writer(self) -> BarWriterRepositoryT: ...
+
+    @property
+    def catalog_writer(self) -> CatalogWriterRepositoryT: ...
+
+    @property
+    def trading_calendar(self) -> TradingCalendarRepositoryT: ...
 
     def __enter__(self) -> Self: ...
 
@@ -65,6 +73,8 @@ class RepositoryFactories[
     RawEventRepositoryT,
     BarRepositoryT,
     BarWriterRepositoryT,
+    CatalogWriterRepositoryT,
+    TradingCalendarRepositoryT,
 ]:
     """Construct repositories around exactly one supplied connection."""
 
@@ -74,6 +84,8 @@ class RepositoryFactories[
     raw_events: Callable[[Connection], RawEventRepositoryT]
     bars: Callable[[Connection], BarRepositoryT]
     bar_writer: Callable[[Connection], BarWriterRepositoryT]
+    catalog_writer: Callable[[Connection], CatalogWriterRepositoryT]
+    trading_calendar: Callable[[Connection], TradingCalendarRepositoryT]
 
 
 class _Lifecycle(Enum):
@@ -90,6 +102,8 @@ class SqlAlchemyUnitOfWork[
     RawEventRepositoryT,
     BarRepositoryT,
     BarWriterRepositoryT,
+    CatalogWriterRepositoryT,
+    TradingCalendarRepositoryT,
 ]:
     """One SQLAlchemy connection, one transaction, and typed repositories."""
 
@@ -103,10 +117,15 @@ class SqlAlchemyUnitOfWork[
             RawEventRepositoryT,
             BarRepositoryT,
             BarWriterRepositoryT,
+            CatalogWriterRepositoryT,
+            TradingCalendarRepositoryT,
         ],
+        *,
+        temporal_write: bool = False,
     ) -> None:
         self._engine = engine
         self._factories = factories
+        self._temporal_write = temporal_write
         self._lifecycle = _Lifecycle.NEW
         self._connection: Connection | None = None
         self._transaction: RootTransaction | None = None
@@ -116,6 +135,8 @@ class SqlAlchemyUnitOfWork[
         self._raw_events: RawEventRepositoryT | None = None
         self._bars: BarRepositoryT | None = None
         self._bar_writer: BarWriterRepositoryT | None = None
+        self._catalog_writer: CatalogWriterRepositoryT | None = None
+        self._trading_calendar: TradingCalendarRepositoryT | None = None
 
     def __enter__(self) -> Self:
         if self._lifecycle is not _Lifecycle.NEW:
@@ -125,9 +146,10 @@ class SqlAlchemyUnitOfWork[
 
         connection = self._engine.connect()
         try:
-            # The engine factory intentionally retains PostgreSQL's READ COMMITTED
-            # default.  Repositories therefore share that default without a global
-            # isolation override.
+            if self._temporal_write:
+                # Migration 0003 temporal triggers require this exact isolation
+                # level after their transaction advisory locks are acquired.
+                connection = connection.execution_options(isolation_level="READ COMMITTED")
             transaction = connection.begin()
             self._data_feeds = self._factories.data_feeds(connection)
             self._instruments = self._factories.instruments(connection)
@@ -135,6 +157,8 @@ class SqlAlchemyUnitOfWork[
             self._raw_events = self._factories.raw_events(connection)
             self._bars = self._factories.bars(connection)
             self._bar_writer = self._factories.bar_writer(connection)
+            self._catalog_writer = self._factories.catalog_writer(connection)
+            self._trading_calendar = self._factories.trading_calendar(connection)
         except BaseException:
             if connection.in_transaction():
                 connection.rollback()
@@ -190,6 +214,18 @@ class SqlAlchemyUnitOfWork[
         self._require_active()
         assert self._bar_writer is not None
         return self._bar_writer
+
+    @property
+    def catalog_writer(self) -> CatalogWriterRepositoryT:
+        self._require_active()
+        assert self._catalog_writer is not None
+        return self._catalog_writer
+
+    @property
+    def trading_calendar(self) -> TradingCalendarRepositoryT:
+        self._require_active()
+        assert self._trading_calendar is not None
+        return self._trading_calendar
 
     def commit(self) -> None:
         """Commit exactly once; repository methods never commit independently."""
@@ -252,6 +288,8 @@ class SqlAlchemyUnitOfWorkFactory[
     RawEventRepositoryT,
     BarRepositoryT,
     BarWriterRepositoryT,
+    CatalogWriterRepositoryT,
+    TradingCalendarRepositoryT,
 ]:
     """Dependency-injectable creator of independent, single-use Units of Work."""
 
@@ -265,6 +303,8 @@ class SqlAlchemyUnitOfWorkFactory[
         raw_events: Callable[[Connection], RawEventRepositoryT],
         bars: Callable[[Connection], BarRepositoryT],
         bar_writer: Callable[[Connection], BarWriterRepositoryT],
+        catalog_writer: Callable[[Connection], CatalogWriterRepositoryT],
+        trading_calendar: Callable[[Connection], TradingCalendarRepositoryT],
     ) -> None:
         self._engine = engine
         self._factories = RepositoryFactories(
@@ -274,6 +314,8 @@ class SqlAlchemyUnitOfWorkFactory[
             raw_events=raw_events,
             bars=bars,
             bar_writer=bar_writer,
+            catalog_writer=catalog_writer,
+            trading_calendar=trading_calendar,
         )
 
     def create(
@@ -285,8 +327,26 @@ class SqlAlchemyUnitOfWorkFactory[
         RawEventRepositoryT,
         BarRepositoryT,
         BarWriterRepositoryT,
+        CatalogWriterRepositoryT,
+        TradingCalendarRepositoryT,
     ]:
         return SqlAlchemyUnitOfWork(self._engine, self._factories)
+
+    def create_temporal_write(
+        self,
+    ) -> SqlAlchemyUnitOfWork[
+        DataFeedRepositoryT,
+        InstrumentRepositoryT,
+        IngestionBatchRepositoryT,
+        RawEventRepositoryT,
+        BarRepositoryT,
+        BarWriterRepositoryT,
+        CatalogWriterRepositoryT,
+        TradingCalendarRepositoryT,
+    ]:
+        """Create a UoW that explicitly uses READ COMMITTED for temporal writes."""
+
+        return SqlAlchemyUnitOfWork(self._engine, self._factories, temporal_write=True)
 
     def __call__(
         self,
@@ -297,6 +357,8 @@ class SqlAlchemyUnitOfWorkFactory[
         RawEventRepositoryT,
         BarRepositoryT,
         BarWriterRepositoryT,
+        CatalogWriterRepositoryT,
+        TradingCalendarRepositoryT,
     ]:
         return self.create()
 

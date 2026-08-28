@@ -1,6 +1,8 @@
 """Immutable application/domain data transfer objects."""
 
 from bisfin.domain.catalog import (
+    AssetType,
+    Currency,
     DataFeed,
     Instrument,
     InstrumentIdentifier,
@@ -10,6 +12,7 @@ from bisfin.domain.catalog import (
     SessionResolvedInstrument,
     Timeframe,
     TradingSession,
+    Venue,
 )
 from bisfin.domain.common import AwareDateTime, ImmutableDTO, JsonObject, require_aware_datetime
 from bisfin.domain.ingestion import (
@@ -31,6 +34,7 @@ from bisfin.domain.market_data import (
 )
 
 __all__ = [
+    "AssetType",
     "AwareDateTime",
     "BarRevision",
     "BarRevisionCandidate",
@@ -38,6 +42,7 @@ __all__ = [
     "BarRevisionWriteStatus",
     "BarSeries",
     "DataFeed",
+    "Currency",
     "ImmutableDTO",
     "IngestionBatch",
     "IngestionBatchStartResult",
@@ -56,5 +61,6 @@ __all__ = [
     "SessionResolvedInstrument",
     "Timeframe",
     "TradingSession",
+    "Venue",
     "require_aware_datetime",
 ]

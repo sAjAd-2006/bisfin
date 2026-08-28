@@ -101,7 +101,10 @@ def test_read_only_is_local_to_requested_transaction() -> None:
     assert engine.connections[0].statements == ["SET TRANSACTION READ ONLY"]
 
 
-@pytest.mark.parametrize("isolation_level", ["REPEATABLE READ", "SERIALIZABLE"])
+@pytest.mark.parametrize(
+    "isolation_level",
+    ["READ UNCOMMITTED", "REPEATABLE READ", "SERIALIZABLE"],
+)
 def test_temporal_write_rejects_stale_snapshot_before_checkout(
     isolation_level: str,
 ) -> None:
