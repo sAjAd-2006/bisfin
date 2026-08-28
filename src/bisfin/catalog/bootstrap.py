@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from types import TracebackType
@@ -13,16 +14,18 @@ from uuid import uuid4
 from bisfin.catalog.errors import CatalogConflictError
 from bisfin.catalog.manifest import CatalogManifestDocument, InstrumentDefinition
 from bisfin.catalog.results import CatalogBootstrapResult
-from bisfin.db.errors import BisfinError
+from bisfin.db.errors import BisfinError, redact_secrets
 from bisfin.domain.catalog import DataFeed, Provider, Venue
 from bisfin.domain.ingestion import IngestionBatch, IngestionBatchStatus, RawEventValidationStatus
 from bisfin.integrations.brsapi import (
+    BrsApiError,
+    BrsApiHttpError,
     BrsApiRawResponse,
     BrsApiSymbolClient,
     BrsApiSymbolMetadata,
     parse_symbol_metadata,
 )
-from bisfin.logging import clear_log_context, log_context
+from bisfin.logging import clear_log_context
 from bisfin.repositories.catalog_writer_repository import SqlAlchemyCatalogWriterRepository
 from bisfin.repositories.protocols import IngestionBatchRepository, RawEventRepository
 
@@ -68,6 +71,14 @@ type Clock = Callable[[], datetime]
 type IdGenerator = Callable[[], str]
 
 
+@dataclass(frozen=True, slots=True)
+class _SymbolEvidence:
+    instrument: InstrumentDefinition
+    response: BrsApiRawResponse | None
+    metadata: BrsApiSymbolMetadata | None
+    error: SymbolValidationError | None
+
+
 class CatalogBootstrapService:
     """Apply one fully validated manifest without database I/O during validation."""
 
@@ -90,83 +101,98 @@ class CatalogBootstrapService:
         symbol_client: BrsApiSymbolClient | None = None,
         request_id: str | None = None,
     ) -> CatalogBootstrapResult:
-        """Validate optional responses first, then execute one temporal transaction."""
+        """A=batch, external acquisition, B=raw audit, C=atomic canonical writes."""
 
         clear_log_context()
+        manifest = document.manifest
+        started_at = self._now()
+        effective_request_id = (request_id or "").strip() or self._id_generator()
         try:
-            evidence = self._validate_symbols(document, validation_mode, symbol_client)
-            effective_request_id = (request_id or "").strip() or self._id_generator()
-            started_at = self._now()
-            manifest = document.manifest
-            with log_context(
-                request_id=effective_request_id,
-                correlation_id=effective_request_id,
-                manifest_id=manifest.manifest_id,
-            ):
+            with self._uow_factory() as unit_of_work:
+                writer = unit_of_work.catalog_writer
+                audit_feeds = self._ensure_audit_references(writer, document)
+                catalog_feed = audit_feeds["BISFIN_CATALOG_MANIFEST"]
+                symbol_feed = audit_feeds["TSETMC_SYMBOL_METADATA"]
+                start = unit_of_work.ingestion_batches.create_batch_if_absent(
+                    feed_id=catalog_feed.feed_id,
+                    parser_version="catalog-bootstrap-v1",
+                    request_id=effective_request_id,
+                    metadata={
+                        "manifest_id": manifest.manifest_id,
+                        "validation_mode": validation_mode.value,
+                        "manifest_sha256": document.payload_sha256,
+                        "requested_instrument_count": len(manifest.instruments),
+                    },
+                    started_at=started_at,
+                )
+                unit_of_work.commit()
+            if not start.created:
+                if start.batch.status is IngestionBatchStatus.RUNNING:
+                    raise CatalogConflictError("catalog request_id is already running")
+                return self._replay_result(
+                    start.batch, manifest_id=manifest.manifest_id, validation_mode=validation_mode
+                )
+            batch = start.batch
+            try:
+                evidence = self._validate_symbols(document, validation_mode, symbol_client)
+            except SymbolValidationError as error:
+                self._finalize_failure(
+                    batch,
+                    len(manifest.instruments),
+                    error,
+                    IngestionBatchStatus.QUARANTINED,
+                )
+                raise
+            with self._uow_factory() as unit_of_work:
+                self._record_manifest_events(
+                    unit_of_work, batch, catalog_feed, document, started_at
+                )
+                self._record_symbol_events(unit_of_work, batch, symbol_feed, evidence)
+                unit_of_work.commit()
+            provider_failure = next(
+                (item.error for item in evidence if item.error is not None),
+                None,
+            )
+            if provider_failure is not None:
+                self._finalize_failure(
+                    batch,
+                    len(manifest.instruments),
+                    provider_failure,
+                    IngestionBatchStatus.QUARANTINED,
+                )
+                raise provider_failure
+            try:
                 with self._uow_factory() as unit_of_work:
-                    writer = unit_of_work.catalog_writer
-                    providers, counts = self._ensure_references(writer, document)
-                    catalog_feed = self._feed_for(
-                        providers, writer, document, "BISFIN_CATALOG_MANIFEST"
+                    providers, counts = self._ensure_references(
+                        unit_of_work.catalog_writer, document
                     )
-                    start = unit_of_work.ingestion_batches.create_batch_if_absent(
-                        feed_id=catalog_feed.feed_id,
-                        parser_version="catalog-bootstrap-v1",
-                        request_id=effective_request_id,
+                    result = self._apply_instruments(
+                        unit_of_work.catalog_writer, document, providers
+                    )
+                    finished_at = self._now()
+                    unit_of_work.ingestion_batches.finalize_batch(
+                        batch.ingestion_batch_id,
+                        status=IngestionBatchStatus.SUCCEEDED,
+                        received_row_count=len(manifest.instruments),
+                        accepted_row_count=len(manifest.instruments),
+                        rejected_row_count=0,
+                        payload_sha256=document.payload_sha256,
                         metadata={
                             "manifest_id": manifest.manifest_id,
                             "validation_mode": validation_mode.value,
                         },
-                        started_at=started_at,
+                        finished_at=finished_at,
                     )
-                    if not start.created:
-                        if start.batch.status is IngestionBatchStatus.RUNNING:
-                            raise CatalogConflictError("catalog request_id is already running")
-                        return self._replay_result(
-                            start.batch,
-                            manifest_id=manifest.manifest_id,
-                            validation_mode=validation_mode,
-                        )
-                    batch = start.batch
-                    with log_context(ingestion_batch_id=batch.ingestion_batch_id):
-                        self._record_manifest_events(
-                            unit_of_work, batch, catalog_feed, document, started_at
-                        )
-                        self._record_symbol_events(
-                            unit_of_work,
-                            batch,
-                            writer,
-                            providers,
-                            document,
-                            evidence,
-                        )
-                        result = self._apply_instruments(writer, document, providers)
-                        finished_at = self._now()
-                        status = (
-                            IngestionBatchStatus.PARTIAL
-                            if result["entries_rejected"]
-                            else IngestionBatchStatus.SUCCEEDED
-                        )
-                        unit_of_work.ingestion_batches.finalize_batch(
-                            batch.ingestion_batch_id,
-                            status=status,
-                            received_row_count=len(manifest.instruments),
-                            accepted_row_count=(
-                                len(manifest.instruments) - result["entries_rejected"]
-                            ),
-                            rejected_row_count=result["entries_rejected"],
-                            payload_sha256=document.payload_sha256,
-                            metadata={
-                                "manifest_id": manifest.manifest_id,
-                                "validation_mode": validation_mode.value,
-                            },
-                            finished_at=finished_at,
-                        )
-                        unit_of_work.commit()
+                    unit_of_work.commit()
+            except CatalogConflictError as error:
+                self._finalize_failure(
+                    batch, len(manifest.instruments), error, IngestionBatchStatus.FAILED
+                )
+                raise
             return CatalogBootstrapResult(
                 batch_id=batch.ingestion_batch_id,
                 manifest_id=manifest.manifest_id,
-                status=status,
+                status=IngestionBatchStatus.SUCCEEDED,
                 started_at=started_at,
                 finished_at=finished_at,
                 payload_sha256=document.payload_sha256,
@@ -182,7 +208,7 @@ class CatalogBootstrapService:
                 identifiers_created=result["identifiers_created"],
                 identifiers_closed=result["identifiers_closed"],
                 spec_versions_created=result["spec_versions_created"],
-                entries_rejected=result["entries_rejected"],
+                entries_rejected=0,
             )
         finally:
             clear_log_context()
@@ -192,26 +218,36 @@ class CatalogBootstrapService:
         document: CatalogManifestDocument,
         mode: CatalogValidationMode,
         client: BrsApiSymbolClient | None,
-    ) -> tuple[tuple[InstrumentDefinition, BrsApiSymbolMetadata, BrsApiRawResponse], ...]:
+    ) -> tuple[_SymbolEvidence, ...]:
         if mode is CatalogValidationMode.MANIFEST_ONLY:
             return ()
         if client is None:
             raise SymbolValidationError("symbol validation requires an explicit client")
-        evidence: list[tuple[InstrumentDefinition, BrsApiSymbolMetadata, BrsApiRawResponse]] = []
+        evidence: list[_SymbolEvidence] = []
         for item in document.manifest.instruments:
-            response = client.fetch_symbol_metadata(item.provider_symbol)
-            metadata = parse_symbol_metadata(response)
-            if metadata.normalized_symbol != item.provider_symbol:
-                raise SymbolProviderMismatchError(f"symbol mismatch for {item.stable_key}")
-            if metadata.isin != item.isin:
-                raise SymbolProviderMismatchError(f"ISIN mismatch for {item.stable_key}")
-            mapped_venue = document.manifest.resolve_provider_market(
-                item.provider_code,
-                metadata.market,
-            )
-            if mapped_venue != item.venue_code:
-                raise SymbolProviderMismatchError(f"market mismatch for {item.stable_key}")
-            evidence.append((item, metadata, response))
+            response: BrsApiRawResponse | None = None
+            try:
+                response = client.fetch_symbol_metadata(item.provider_symbol)
+                metadata = parse_symbol_metadata(response)
+                error: SymbolValidationError | None = None
+                if metadata.normalized_symbol != item.provider_symbol:
+                    error = SymbolProviderMismatchError(f"symbol mismatch for {item.stable_key}")
+                elif metadata.isin != item.isin:
+                    error = SymbolProviderMismatchError(f"ISIN mismatch for {item.stable_key}")
+                elif (
+                    document.manifest.resolve_provider_market(item.provider_code, metadata.market)
+                    != item.venue_code
+                ):
+                    error = SymbolProviderMismatchError(f"market mismatch for {item.stable_key}")
+                evidence.append(_SymbolEvidence(item, response, metadata, error))
+            except (BisfinError, BrsApiError) as error:
+                if response is None and isinstance(error, BrsApiHttpError):
+                    response = error.response
+                evidence.append(
+                    _SymbolEvidence(
+                        item, response, None, SymbolValidationError(redact_secrets(error))
+                    )
+                )
         return tuple(evidence)
 
     def _ensure_references(
@@ -254,6 +290,35 @@ class CatalogBootstrapService:
         return providers, counts
 
     @staticmethod
+    def _ensure_audit_references(
+        writer: SqlAlchemyCatalogWriterRepository,
+        document: CatalogManifestDocument,
+    ) -> dict[str, DataFeed]:
+        """Create only the feeds needed to persist audit evidence before validation.
+
+        All other catalog reference rows remain in transaction C with instrument writes.
+        """
+
+        required_codes = {"BISFIN_CATALOG_MANIFEST", "TSETMC_SYMBOL_METADATA"}
+        definitions = {
+            item.feed_code: item
+            for item in document.manifest.feeds
+            if item.feed_code in required_codes
+        }
+        if definitions.keys() != required_codes:
+            raise CatalogConflictError("catalog manifest lacks required audit feeds")
+        provider_definitions = {item.provider_code: item for item in document.manifest.providers}
+        feeds: dict[str, DataFeed] = {}
+        for feed_code, definition in definitions.items():
+            provider_definition = provider_definitions.get(definition.provider_code)
+            if provider_definition is None:
+                raise CatalogConflictError("catalog manifest lacks an audit-feed provider")
+            provider, _ = writer.ensure_provider(provider_definition)
+            feed, _ = writer.ensure_feed(provider.provider_id, definition)
+            feeds[feed_code] = feed
+        return feeds
+
+    @staticmethod
     def _feed_for(
         providers: dict[str, Provider],
         writer: SqlAlchemyCatalogWriterRepository,
@@ -293,28 +358,44 @@ class CatalogBootstrapService:
         self,
         unit_of_work: CatalogBootstrapUnitOfWork,
         batch: IngestionBatch,
-        writer: SqlAlchemyCatalogWriterRepository,
-        providers: dict[str, Provider],
-        document: CatalogManifestDocument,
-        evidence: tuple[tuple[InstrumentDefinition, BrsApiSymbolMetadata, BrsApiRawResponse], ...],
+        feed: DataFeed,
+        evidence: tuple[_SymbolEvidence, ...],
     ) -> None:
-        if not evidence:
-            return
-        feed = self._feed_for(providers, writer, document, "TSETMC_SYMBOL_METADATA")
-        for _, metadata, response in evidence:
+        for item in evidence:
+            if item.response is None:
+                continue
+            response = item.response
             received_at = response.response_received_at
             unit_of_work.raw_events.ensure_month_partition(received_at)
+            raw_payload: dict[str, object]
+            if item.metadata is None:
+                raw_payload = {
+                    "response_sha256": hashlib.sha256(response.body_bytes).hexdigest(),
+                    "response_bytes_hex": response.body_bytes.hex(),
+                    "parse_error": redact_secrets(item.error or "provider response rejected"),
+                }
+            else:
+                raw_payload = dict(item.metadata.raw_payload)
             unit_of_work.raw_events.insert_response_record(
                 ingested_at=received_at,
                 ingestion_batch_id=batch.ingestion_batch_id,
                 feed_id=feed.feed_id,
-                payload_sha256=metadata.response_sha256,
-                raw_payload=metadata.raw_payload,
+                payload_sha256=hashlib.sha256(response.body_bytes).hexdigest(),
+                raw_payload=raw_payload,
                 source_record_key=(
-                    f"brsapi|symbol|{metadata.normalized_symbol}|{received_at.isoformat()}"
+                    f"brsapi|symbol|{item.instrument.provider_symbol}|{received_at.isoformat()}"
                 ),
                 observed_at=received_at,
-                validation_status=RawEventValidationStatus.ACCEPTED,
+                validation_status=(
+                    RawEventValidationStatus.REJECTED
+                    if item.error
+                    else RawEventValidationStatus.ACCEPTED
+                ),
+                validation_errors=(
+                    [{"code": item.error.code, "message": redact_secrets(item.error)}]
+                    if item.error
+                    else ()
+                ),
             )
 
     @staticmethod
@@ -347,6 +428,28 @@ class CatalogBootstrapService:
             result["identifiers_closed"] += outcome.identifier_closed
             result["spec_versions_created"] += outcome.specification_created
         return result
+
+    def _finalize_failure(
+        self,
+        batch: IngestionBatch,
+        received_row_count: int,
+        error: BisfinError,
+        status: IngestionBatchStatus,
+    ) -> None:
+        """Transaction D: terminal state never shares the rolled-back write transaction."""
+
+        with self._uow_factory() as unit_of_work:
+            unit_of_work.ingestion_batches.finalize_batch(
+                batch.ingestion_batch_id,
+                status=status,
+                received_row_count=received_row_count,
+                accepted_row_count=0,
+                rejected_row_count=received_row_count,
+                error_summary=redact_secrets(error),
+                metadata={"failure_code": getattr(error, "code", "CATALOG_FAILURE")},
+                finished_at=self._now(),
+            )
+            unit_of_work.commit()
 
     @staticmethod
     def _replay_result(

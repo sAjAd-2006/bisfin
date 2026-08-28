@@ -18,4 +18,8 @@ uv run --frozen bisfin catalog bootstrap --manifest tests/fixtures/catalog/catal
 
 `live-validate` فقط با `BRSAPI_API_KEY` اجرا می‌شود و در CI ممنوع است. پاسخ‌های Symbol و هر entry manifest در `ingest.raw_event` با source keyهای `brsapi|symbol|...` و `bisfin|catalog-manifest|...` ثبت می‌شوند. repositoryها commit نمی‌کنند؛ bootstrap زمانی از تراکنش `READ COMMITTED` استفاده می‌کند و قفل advisory per-key به‌همراه triggerهای PostgreSQL مرجع نهایی صحت هستند.
 
+## مرز تراکنش durable
+
+اعتبارسنجی ساختاری فایل قبل از ساخت batch است. پس از آن: A) batch `RUNNING` و فقط feedهای لازم برای audit ساخته و commit می‌شوند؛ B) acquisition fixture/live خارج از تراکنش انجام و raw eventها commit می‌شوند؛ C) همهٔ تغییرات canonical باقی‌مانده در یک تراکنش temporal اتمیک اعمال می‌شوند؛ D) در failure یک تراکنش مستقل batch را `QUARANTINED` (provider mismatch) یا `FAILED` (conflict canonical) می‌کند. بنابراین raw audit از rollback مرحلهٔ C پاک نمی‌شود.
+
 محدودیت‌ها: کشف کل بازار، derivative، corporate action و هرگونه اصلاح خودکار manifest در این PR وجود ندارد.

@@ -22,6 +22,12 @@ auto-discover instruments/calendars, schedule jobs, run strategies, calculate
 features, train models, or expose an API server. Hosted CI never contacts
 BrsApi; fixture mode is the reproducible default.
 
+Catalog bootstrap and calendar import use a durable-audit boundary: the running
+batch and raw evidence are committed before their atomic canonical write phase.
+Consequently, a provider validation failure becomes `QUARANTINED` and a canonical
+conflict becomes `FAILED`, while the audit evidence remains queryable. This is
+intentional and does not weaken the all-or-nothing guarantee for canonical rows.
+
 ## Repository structure
 
 ```text

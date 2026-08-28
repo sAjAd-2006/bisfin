@@ -110,6 +110,16 @@ jobs:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make brsapi-test-integration
 
+      - name: Run catalog PostgreSQL integration and concurrency suite
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make catalog-test-integration
+
+      - name: Run calendar PostgreSQL integration and concurrency suite
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make calendar-test-integration
+
       - name: Run deterministic catalog, calendar, and daily-bar fixture flow
         env:
           BISFIN_RUN_DB_INTEGRATION: "1"

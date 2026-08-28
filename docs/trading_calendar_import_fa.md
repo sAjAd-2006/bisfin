@@ -10,3 +10,7 @@ uv run --frozen bisfin calendar import --file tests/fixtures/calendar/tse_regula
 ```
 
 هر روز یک raw audit event با کلید `bisfin|calendar|<calendar_id>|<venue>|REGULAR|<date>` می‌گیرد. تقویم آنلاین، محاسبهٔ تعطیلات و اصلاح خودکار ساعت جلسه در محدودهٔ این PR نیست.
+
+## مرز تراکنش durable
+
+Validation فایل پیش از batch است. A) batch `RUNNING` commit می‌شود؛ B) همهٔ raw calendar eventها commit می‌شوند؛ C) sessionهای canonical در یک تراکنش اتمیک نوشته می‌شوند؛ و D) conflict در تراکنش جدا batch را `FAILED` می‌کند. پس conflict هیچ روز جدیدی را باقی نمی‌گذارد، اما raw audit و روز conflict قبلی حفظ می‌شوند.

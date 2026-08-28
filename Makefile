@@ -86,7 +86,13 @@ catalog-test:
 
 catalog-test-integration: export BISFIN_RUN_DB_INTEGRATION := 1
 catalog-test-integration: db-wait
-	$(UV_RUN) pytest -m integration tests/integration/test_catalog_calendar_bootstrap.py
+	$(UV_RUN) pytest -m integration \
+		tests/integration/test_catalog_calendar_audit_durability.py::test_provider_mismatch_keeps_batch_and_raw_evidence \
+		tests/integration/test_catalog_calendar_audit_durability.py::test_malformed_provider_response_keeps_exact_raw_evidence \
+		tests/integration/test_catalog_calendar_audit_durability.py::test_canonical_conflict_keeps_catalog_raw_audit_and_existing_rows \
+		tests/integration/test_catalog_calendar_audit_durability.py::test_invalid_manifest_creates_no_audit_or_canonical_rows \
+		tests/integration/test_catalog_calendar_concurrency.py::test_concurrent_identical_catalog_bootstrap_creates_one_instrument \
+		tests/integration/test_catalog_calendar_concurrency.py::test_concurrent_conflicting_symbol_ownership_cannot_both_commit
 
 catalog-validate-fixture:
 	$(UV_RUN) bisfin catalog validate --manifest tests/fixtures/catalog/catalog_bootstrap_success.json
@@ -103,7 +109,9 @@ calendar-test:
 
 calendar-test-integration: export BISFIN_RUN_DB_INTEGRATION := 1
 calendar-test-integration: db-wait
-	$(UV_RUN) pytest -m integration tests/integration/test_catalog_calendar_bootstrap.py
+	$(UV_RUN) pytest -m integration \
+		tests/integration/test_catalog_calendar_audit_durability.py::test_calendar_conflict_keeps_raw_rows_and_rolls_back_new_sessions \
+		tests/integration/test_catalog_calendar_concurrency.py::test_concurrent_identical_calendar_import_creates_no_duplicate_sessions
 
 calendar-validate-fixture:
 	$(UV_RUN) bisfin calendar validate --file tests/fixtures/calendar/tse_regular_success.json

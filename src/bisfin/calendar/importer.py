@@ -104,48 +104,56 @@ class TradingCalendarImportService:
                             raise CalendarConflictError("calendar request_id is already running")
                         return self._replay_result(start.batch, validated)
                     batch = start.batch
-                    with log_context(ingestion_batch_id=batch.ingestion_batch_id):
+                    unit_of_work.commit()
+                # Transaction B: raw audit is durable before mutable sessions.
+                with self._uow_factory() as unit_of_work:
+                    feed = self._get_calendar_feed(unit_of_work.catalog_writer)
+                    unit_of_work.raw_events.ensure_month_partition(started_at)
+                    for session in validated.sessions:
+                        raw = {
+                            "calendar_id": manifest.calendar_id,
+                            "venue_code": manifest.venue_code,
+                            "timezone": manifest.timezone,
+                            "trading_date": session.trading_date.isoformat(),
+                            "session_code": session.session_code,
+                            "is_trading_day": session.is_trading_day,
+                            "open_local_time": (
+                                session.open_local_time.isoformat()
+                                if session.open_local_time is not None
+                                else None
+                            ),
+                            "close_local_time": (
+                                session.close_local_time.isoformat()
+                                if session.close_local_time is not None
+                                else None
+                            ),
+                            "source_status": session.source_status,
+                            "metadata": session.metadata,
+                        }
+                        unit_of_work.raw_events.insert_response_record(
+                            ingested_at=started_at,
+                            ingestion_batch_id=batch.ingestion_batch_id,
+                            feed_id=feed.feed_id,
+                            payload_sha256=_sha256_json(raw),
+                            raw_payload=raw,
+                            source_record_key=calendar_source_record_key(manifest, session),
+                            source_date_text=session.trading_date.isoformat(),
+                            validation_status=RawEventValidationStatus.ACCEPTED,
+                        )
+                    unit_of_work.commit()
+                # Transaction C: all session writes roll back together on conflict.
+                inserted_open = 0
+                inserted_closed = 0
+                unchanged = 0
+                try:
+                    with self._uow_factory() as unit_of_work:
+                        venue = self._get_venue(unit_of_work.catalog_writer, manifest.venue_code)
                         unit_of_work.trading_calendar.acquire_session_locks(
                             venue.venue_id, validated.sessions
                         )
-                        inserted_open = 0
-                        inserted_closed = 0
-                        unchanged = 0
-                        unit_of_work.raw_events.ensure_month_partition(started_at)
                         for session in validated.sessions:
-                            raw = {
-                                "calendar_id": manifest.calendar_id,
-                                "venue_code": manifest.venue_code,
-                                "timezone": manifest.timezone,
-                                "trading_date": session.trading_date.isoformat(),
-                                "session_code": session.session_code,
-                                "is_trading_day": session.is_trading_day,
-                                "open_local_time": (
-                                    session.open_local_time.isoformat()
-                                    if session.open_local_time is not None
-                                    else None
-                                ),
-                                "close_local_time": (
-                                    session.close_local_time.isoformat()
-                                    if session.close_local_time is not None
-                                    else None
-                                ),
-                                "source_status": session.source_status,
-                                "metadata": session.metadata,
-                            }
-                            unit_of_work.raw_events.insert_response_record(
-                                ingested_at=started_at,
-                                ingestion_batch_id=batch.ingestion_batch_id,
-                                feed_id=feed.feed_id,
-                                payload_sha256=_sha256_json(raw),
-                                raw_payload=raw,
-                                source_record_key=calendar_source_record_key(manifest, session),
-                                source_date_text=session.trading_date.isoformat(),
-                                validation_status=RawEventValidationStatus.ACCEPTED,
-                            )
                             outcome = unit_of_work.trading_calendar.ensure_session(
-                                venue.venue_id,
-                                session,
+                                venue.venue_id, session
                             )
                             if outcome.created:
                                 if session.is_trading_day:
@@ -169,6 +177,24 @@ class TradingCalendarImportService:
                             finished_at=finished_at,
                         )
                         unit_of_work.commit()
+                except CalendarConflictError as error:
+                    with self._uow_factory() as unit_of_work:
+                        unit_of_work.ingestion_batches.finalize_batch(
+                            batch.ingestion_batch_id,
+                            status=IngestionBatchStatus.FAILED,
+                            received_row_count=len(validated.sessions),
+                            accepted_row_count=0,
+                            rejected_row_count=len(validated.sessions),
+                            error_summary=str(error),
+                            metadata={
+                                "calendar_id": manifest.calendar_id,
+                                "venue_code": manifest.venue_code,
+                                "failure_code": error.code,
+                            },
+                            finished_at=self._now(),
+                        )
+                        unit_of_work.commit()
+                    raise
             return CalendarImportResult(
                 batch_id=batch.ingestion_batch_id,
                 calendar_id=manifest.calendar_id,

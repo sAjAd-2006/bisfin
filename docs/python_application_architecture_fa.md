@@ -401,3 +401,8 @@ PR-06 کاتالوگ و تقویم را با فایل‌های JSON نسخه‌�
 `catalog_writer` و `trading_calendar` تأمین می‌کند. Parsing و Symbol fixture/live
 خارج از تراکنش هستند؛ نوشتن temporal کاتالوگ با `READ COMMITTED` انجام می‌شود.
 جزئیات عملیاتی در `catalog_bootstrap_fa.md` و `trading_calendar_import_fa.md` است.
+
+برای durable audit، lifecycle عمداً به چند تراکنش تقسیم شده است: ایجاد batch و
+ثبت `raw_event` پیش از تراکنش اتمیک canonical commit می‌شوند. در نتیجه خطای
+provider، batch را `QUARANTINED` و conflict canonical، آن را `FAILED` می‌کند، اما
+raw evidence باقی می‌ماند؛ تنها تغییرات canonical در مرحلهٔ آخر all-or-nothing هستند.
