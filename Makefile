@@ -88,11 +88,14 @@ catalog-test-integration: export BISFIN_RUN_DB_INTEGRATION := 1
 catalog-test-integration: db-wait
 	$(UV_RUN) pytest -m integration \
 		tests/integration/test_catalog_temporal_coverage.py \
+		tests/integration/test_catalog_identity_matrix.py \
 		tests/integration/test_catalog_calendar_audit_durability.py::test_provider_mismatch_keeps_batch_and_raw_evidence \
 		tests/integration/test_catalog_calendar_audit_durability.py::test_malformed_provider_response_keeps_exact_raw_evidence \
 		tests/integration/test_catalog_calendar_audit_durability.py::test_canonical_conflict_keeps_catalog_raw_audit_and_existing_rows \
 		tests/integration/test_catalog_calendar_audit_durability.py::test_invalid_manifest_creates_no_audit_or_canonical_rows \
 		tests/integration/test_catalog_calendar_concurrency.py::test_concurrent_identical_catalog_bootstrap_creates_one_instrument \
+		tests/integration/test_catalog_calendar_concurrency.py::test_concurrent_conflicting_symbol_renames_create_one_canonical_history \
+		tests/integration/test_catalog_calendar_concurrency.py::test_independent_instrument_specification_writes_are_not_globally_serialized \
 		tests/integration/test_catalog_calendar_concurrency.py::test_concurrent_conflicting_symbol_ownership_cannot_both_commit
 
 catalog-validate-fixture:

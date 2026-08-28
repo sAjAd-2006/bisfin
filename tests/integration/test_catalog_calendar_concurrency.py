@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from threading import Barrier
+from threading import Barrier, Event
 from typing import cast
 from uuid import uuid4
 
@@ -43,6 +43,162 @@ def test_concurrent_identical_catalog_bootstrap_creates_one_instrument(
 
     assert statuses == [IngestionBatchStatus.SUCCEEDED, IngestionBatchStatus.SUCCEEDED]
     assert _instrument_count(db_engine, document.manifest.instruments[0].isin) == 1
+
+
+def test_concurrent_conflicting_symbol_renames_create_one_canonical_history(
+    db_engine: Engine, tmp_path: Path
+) -> None:
+    """Two different targets for one old symbol serialize on the shared ISIN key."""
+
+    initial_path = _write_catalog(tmp_path / "rename-base.json")
+    initial = load_catalog_manifest(initial_path)
+    service = CatalogBootstrapService(
+        unit_of_work_factory=create_unit_of_work_factory(db_engine).create_temporal_write
+    )
+    service.bootstrap(initial, request_id=f"rename-base-{uuid4()}")
+    old_symbol = initial.manifest.instruments[0].provider_symbol
+    payload = json.loads(initial_path.read_text(encoding="utf-8"))
+    first_target = f"REN{uuid4().hex[:10].upper()}"
+    second_target = f"REN{uuid4().hex[:10].upper()}"
+    first = load_catalog_manifest(
+        _write_rename(tmp_path / "rename-first.json", payload, first_target)
+    )
+    second = load_catalog_manifest(
+        _write_rename(tmp_path / "rename-second.json", payload, second_target)
+    )
+    barrier = Barrier(2)
+
+    def apply(document: CatalogManifestDocument) -> object:
+        barrier.wait(timeout=10)
+        try:
+            return (
+                CatalogBootstrapService(
+                    unit_of_work_factory=create_unit_of_work_factory(
+                        db_engine
+                    ).create_temporal_write
+                )
+                .bootstrap(document, request_id=f"rename-conflict-{uuid4()}")
+                .status
+            )
+        except CatalogConflictError:
+            return CatalogConflictError
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(apply, (first, second), timeout=20))
+    assert outcomes.count(IngestionBatchStatus.SUCCEEDED) == 1
+    assert outcomes.count(CatalogConflictError) == 1
+
+    with db_engine.connect() as connection:
+        instrument_id = connection.execute(
+            text(
+                "SELECT instrument_id FROM catalog.instrument_identifier "
+                "WHERE identifier_type = 'ISIN' AND identifier_value = :isin"
+            ),
+            {"isin": initial.manifest.instruments[0].isin},
+        ).scalar_one()
+        rows = (
+            connection.execute(
+                text(
+                    "SELECT identifier_value, valid_from, valid_to "
+                    "FROM catalog.instrument_identifier "
+                    "WHERE instrument_id = :id "
+                    "AND identifier_type = 'BRSAPI_L18' "
+                    "ORDER BY valid_from"
+                ),
+                {"id": instrument_id},
+            )
+            .mappings()
+            .all()
+        )
+    assert len(rows) == 2
+    assert rows[0]["identifier_value"] == old_symbol
+    assert rows[0]["valid_to"].isoformat() == "2025-06-01T00:00:00+00:00"
+    assert rows[1]["identifier_value"] in {first_target, second_target}
+    assert rows[1]["valid_from"].isoformat() == "2025-06-01T00:00:00+00:00"
+    assert rows[1]["valid_to"] is None
+
+
+def test_independent_instrument_specification_writes_are_not_globally_serialized(
+    db_engine: Engine, tmp_path: Path
+) -> None:
+    """A holds A's identifier/spec advisory locks while B completes before A commits.
+
+    The logical keys differ because both the provider/identifier composite and
+    the instrument specification key are unique per generated instrument.
+    """
+
+    first_path = _write_catalog(tmp_path / "independent-a.json")
+    second_path = _write_catalog(tmp_path / "independent-b.json")
+    first = load_catalog_manifest(first_path)
+    second = load_catalog_manifest(second_path)
+    service = CatalogBootstrapService(
+        unit_of_work_factory=create_unit_of_work_factory(db_engine).create_temporal_write
+    )
+    service.bootstrap(first, request_id=f"independent-a-base-{uuid4()}")
+    service.bootstrap(second, request_id=f"independent-b-base-{uuid4()}")
+    first_changed = load_catalog_manifest(
+        _write_spec_change(tmp_path / "independent-a-change.json", first_path, "2")
+    )
+    second_changed = load_catalog_manifest(
+        _write_spec_change(tmp_path / "independent-b-change.json", second_path, "3")
+    )
+    first_definition = first_changed.manifest.instruments[0]
+    holder_ready = Event()
+    completed_before_release = Event()
+
+    def apply_second() -> IngestionBatchStatus:
+        if not holder_ready.wait(timeout=5):
+            raise AssertionError("first transaction never reached its advisory-lock checkpoint")
+        result = CatalogBootstrapService(
+            unit_of_work_factory=create_unit_of_work_factory(db_engine).create_temporal_write
+        ).bootstrap(second_changed, request_id=f"independent-b-change-{uuid4()}")
+        completed_before_release.set()
+        return result.status
+
+    with db_engine.connect() as connection:
+        provider_id = connection.execute(
+            text("SELECT provider_id FROM catalog.data_provider WHERE provider_code = :code"),
+            {"code": first_definition.provider_code},
+        ).scalar_one()
+        venue_id = connection.execute(
+            text("SELECT venue_id FROM catalog.venue WHERE venue_code = :code"),
+            {"code": first_definition.venue_code},
+        ).scalar_one()
+
+    factory = create_unit_of_work_factory(db_engine)
+    with factory.create_temporal_write() as holder:
+        holder.catalog_writer.apply_instrument(
+            first_definition, provider_id=provider_id, venue_id=venue_id
+        )
+        held_advisory_locks = holder.connection.execute(
+            text(
+                "SELECT count(*) FROM pg_locks "
+                "WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND granted"
+            )
+        ).scalar_one()
+        assert held_advisory_locks > 0
+        holder_ready.set()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(apply_second)
+            assert future.result(timeout=10) is IngestionBatchStatus.SUCCEEDED
+        assert completed_before_release.is_set()
+        assert holder.connection.in_transaction()
+        holder.commit()
+
+    for document, expected_tick in ((first_changed, 2), (second_changed, 3)):
+        with db_engine.connect() as connection:
+            instrument_id = connection.execute(
+                text(
+                    "SELECT instrument_id FROM catalog.instrument_identifier "
+                    "WHERE identifier_type = 'ISIN' AND identifier_value = :isin"
+                ),
+                {"isin": document.manifest.instruments[0].isin},
+            ).scalar_one()
+        with factory() as unit_of_work:
+            specification = unit_of_work.instruments.get_active_spec(
+                instrument_id, document.manifest.instruments[0].spec_effective_from
+            )
+        assert specification is not None and specification.price_tick == expected_tick
 
 
 def test_concurrent_conflicting_symbol_ownership_cannot_both_commit(
@@ -120,6 +276,31 @@ def _write_catalog(path: Path) -> Path:
             "name_fa": f"Concurrency {token[:8]}",
             "name_en": f"Concurrency {token[:8]}",
         }
+    )
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def _write_rename(path: Path, payload: dict[str, object], target: str) -> Path:
+    renamed = json.loads(json.dumps(payload))
+    renamed["manifest_id"] = f"rename-{uuid4()}"
+    instrument = cast(dict[str, object], renamed["instruments"][0])
+    instrument.update(
+        {
+            "previous_symbol": instrument["provider_symbol"],
+            "provider_symbol": target,
+            "rename_effective_from": "2025-06-01T00:00:00Z",
+        }
+    )
+    path.write_text(json.dumps(renamed), encoding="utf-8")
+    return path
+
+
+def _write_spec_change(path: Path, source: Path, price_tick: str) -> Path:
+    payload = json.loads(source.read_text(encoding="utf-8"))
+    payload["manifest_id"] = f"spec-change-{uuid4()}"
+    payload["instruments"][0].update(
+        {"price_tick": price_tick, "spec_effective_from": "2025-06-01T00:00:00Z"}
     )
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
