@@ -16,6 +16,7 @@ backtesting and point-in-time-correct research. The current scope includes:
 - deterministic, versioned catalog bootstrap and explicit trading-calendar import
   workflows that remove the manual prerequisite seed for fixture-backed PR-05;
 - database-independent unit tests and real PostgreSQL 16 integration tests.
+- immutable Point-in-Time bar-revision snapshot manifests and verifiable local artifacts.
 
 This release does not ingest adjusted (`type=3`) or intraday (`type=1`) candles,
 auto-discover instruments/calendars, schedule jobs, run strategies, calculate
@@ -39,6 +40,7 @@ intentional and does not weaken the all-or-nothing guarantee for canonical rows.
 |   `-- tests/                            # Transactional SQL smoke tests
 |-- docs/
 |   |-- brsapi_daily_bar_ingestion_fa.md
+|   |-- data_snapshot_builder_fa.md
 |   |-- python_application_architecture_fa.md
 |   `-- trading_database_design_fa.md
 |-- scripts/db/                           # Database lifecycle/check scripts
@@ -182,6 +184,27 @@ excluded from every normal check. `make brsapi-ingest-live` requires both
 `BRSAPI_API_KEY` and explicit `BISFIN_RUN_BRSAPI_LIVE_TEST=1` opt-in; invoking the
 CLI directly without `--fixture` is a live request and requires the API key.
 
+## Point-in-Time snapshots
+
+Snapshot manifests are strict UTF-8 JSON documents. They choose only final
+`market.bar_revision` rows under one knowledge cutoff and replay mode; the
+artifact is then immutable evidence, not a replacement for per-decision-time
+availability checks.
+
+```bash
+uv run --frozen bisfin snapshot validate \
+  --manifest tests/fixtures/snapshots/daily_raw_success.json
+make snapshot-test
+make snapshot-test-integration
+make snapshot-build-fixture
+make snapshot-verify-fixture
+```
+
+`snapshot-build-fixture` bootstraps the catalog and calendar and ingests the
+offline RAW-bar fixture before creating the artifact. It never contacts BrsApi.
+For a full contract and drift-verification semantics, read the Persian
+[snapshot builder guide](docs/data_snapshot_builder_fa.md).
+
 Catalog and calendar files are strict JSON contracts; their unknown fields and
 duplicate JSON keys are rejected. BrsApi Symbol is deliberately used only for a
 manifest-listed symbol, never as a bulk symbol-master endpoint. Read the Persian
@@ -269,6 +292,11 @@ The reset script refuses to delete `postgres`, `template0`, or `template1`.
 | `make app-config-check` | Validate and safely summarize settings. |
 | `make app-db-health` | Run the structured DB health check. |
 | `make app-db-current` | Compare current and expected DB revisions. |
+| `make snapshot-test` | Run snapshot unit tests. |
+| `make snapshot-test-integration` | Run snapshot PostgreSQL integration tests. |
+| `make snapshot-e2e-fixture` | Exercise the fixture-backed snapshot E2E path. |
+| `make snapshot-build-fixture` | Bootstrap/ingest fixtures and build an artifact. |
+| `make snapshot-verify-fixture` | Verify the fixture artifact and live replay candidate. |
 | `make check` | Run lint, format, unit, migration, and SQL checks. |
 
 ## Point-in-time and transaction rules

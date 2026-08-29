@@ -36,6 +36,10 @@ from bisfin.integrations.brsapi import (
 )
 from bisfin.logging import configure_logging
 from bisfin.repositories import create_unit_of_work_factory
+from bisfin.snapshots.builder import SnapshotBuilder
+from bisfin.snapshots.contracts import SnapshotBuildResult, SnapshotVerificationResult
+from bisfin.snapshots.manifest import load_snapshot_manifest
+from bisfin.snapshots.verifier import SnapshotVerifier
 
 SettingsFactory = Callable[[], Settings]
 EngineFactory = Callable[[Settings], Engine]
@@ -105,6 +109,29 @@ def build_parser() -> argparse.ArgumentParser:
     calendar_import.add_argument("--file", type=Path, required=True)
     calendar_import.add_argument("--request-id")
     calendar_import.add_argument("--output-format", choices=("human", "json"), default="human")
+    snapshot = subcommands.add_parser(
+        "snapshot", help="validate, build, show, or verify a frozen snapshot"
+    )
+    snapshot_commands = snapshot.add_subparsers(dest="snapshot_command", required=True)
+    snapshot_validate = snapshot_commands.add_parser(
+        "validate", help="strictly validate a snapshot manifest"
+    )
+    snapshot_validate.add_argument("--manifest", type=Path, required=True)
+    snapshot_build = snapshot_commands.add_parser(
+        "build", help="build an immutable bar-revision snapshot"
+    )
+    snapshot_build.add_argument("--manifest", type=Path, required=True)
+    snapshot_build.add_argument("--output-dir", type=Path, required=True)
+    snapshot_build.add_argument("--output-format", choices=("human", "json"), default="human")
+    snapshot_show = snapshot_commands.add_parser("show", help="show frozen snapshot metadata")
+    snapshot_show.add_argument("--code", required=True)
+    snapshot_show.add_argument("--output-format", choices=("human", "json"), default="human")
+    snapshot_verify = snapshot_commands.add_parser(
+        "verify", help="verify immutable snapshot artifacts"
+    )
+    snapshot_verify.add_argument("--code", required=True)
+    snapshot_verify.add_argument("--against-db", action="store_true")
+    snapshot_verify.add_argument("--output-format", choices=("human", "json"), default="human")
     return parser
 
 
@@ -140,6 +167,64 @@ def run(
         for key, value in settings.safe_summary().items():
             print(f"{key}={value}", file=stdout)
         return 0
+
+    if arguments.command == "snapshot" and arguments.snapshot_command == "validate":
+        try:
+            snapshot_document = load_snapshot_manifest(arguments.manifest)
+        except (OSError, ValueError, BisfinError) as error:
+            print(f"snapshot: invalid ({redact_secrets(error)})", file=stderr)
+            return 2
+        _print_json_or_human(
+            {
+                "snapshot_code": snapshot_document.request.snapshot_code,
+                "source_manifest_sha256": snapshot_document.source_manifest_sha256,
+                "specification_sha256": snapshot_document.specification_sha256,
+            },
+            output_format="human",
+            prefix="snapshot: valid",
+            stdout=stdout,
+        )
+        return 0
+
+    if arguments.command == "snapshot":
+        snapshot_engine: Engine | None = None
+        try:
+            snapshot_engine = engine_factory(settings)
+            from bisfin.repositories.snapshot_repository import SnapshotRecord
+
+            snapshot_result: SnapshotBuildResult | SnapshotVerificationResult | SnapshotRecord
+            if arguments.snapshot_command == "build":
+                snapshot_result = SnapshotBuilder(snapshot_engine).build(
+                    load_snapshot_manifest(arguments.manifest), output_dir=arguments.output_dir
+                )
+            elif arguments.snapshot_command == "verify":
+                snapshot_result = SnapshotVerifier(snapshot_engine).verify(
+                    arguments.code, against_db=arguments.against_db
+                )
+            elif arguments.snapshot_command == "show":
+                from bisfin.db.transaction import TransactionManager
+                from bisfin.repositories.snapshot_repository import SqlAlchemySnapshotRepository
+
+                with TransactionManager(snapshot_engine).begin(read_only=True) as connection:
+                    record = SqlAlchemySnapshotRepository(connection).get_by_code(arguments.code)
+                    if record is None:
+                        raise ValueError("snapshot code was not found")
+                    snapshot_result = record
+            else:
+                raise AssertionError("unhandled snapshot command")
+        except (BisfinError, ValueError, OSError) as error:
+            print(f"snapshot: failed ({redact_secrets(error)})", file=stderr)
+            return 4
+        finally:
+            if snapshot_engine is not None:
+                dispose_engine(snapshot_engine)
+        _print_json_or_human(
+            snapshot_result.model_dump(mode="json"),
+            output_format=arguments.output_format,
+            prefix="snapshot: complete",
+            stdout=stdout,
+        )
+        return 0 if getattr(snapshot_result, "verified", True) else 5
 
     if arguments.command == "catalog" and arguments.catalog_command == "validate":
         try:

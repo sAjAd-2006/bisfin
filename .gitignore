@@ -10,6 +10,8 @@ postgres-data/
 *.dump
 *.log
 .tmp_pg_*/
+var/snapshots/
+.tmp/snapshots/
 
 # Python and uv generated files
 .venv/

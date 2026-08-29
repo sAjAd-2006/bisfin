@@ -65,6 +65,11 @@ jobs:
           make catalog-test
           make calendar-test
 
+      - name: Run snapshot unit tests
+        run: |
+          make snapshot-test
+          uv run --frozen bisfin snapshot validate --manifest tests/fixtures/snapshots/daily_raw_success.json
+
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
@@ -119,6 +124,15 @@ jobs:
         env:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make calendar-test-integration
+
+      - name: Run snapshot PostgreSQL integration suite
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: |
+          make snapshot-test-integration
+          make snapshot-e2e-fixture
+          make snapshot-build-fixture
+          make snapshot-verify-fixture
 
       - name: Run deterministic catalog, calendar, and daily-bar fixture flow
         env:

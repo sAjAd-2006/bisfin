@@ -13,7 +13,29 @@ BRSAPI_OUTPUT_FORMAT ?= human
 	brsapi-ingest-fixture brsapi-ingest-live catalog-test catalog-test-integration \
 	catalog-validate-fixture catalog-bootstrap-fixture catalog-symbol-live-check calendar-test \
 	calendar-test-integration calendar-validate-fixture calendar-import-fixture \
-	bootstrap-e2e-fixture app-config-check app-db-health app-db-current check
+	bootstrap-e2e-fixture app-config-check app-db-health app-db-current check \
+	snapshot-test snapshot-test-integration snapshot-e2e-fixture snapshot-build-fixture \
+	snapshot-verify-fixture
+
+snapshot-test:
+	$(UV_RUN) pytest -m "not integration" tests/unit/test_snapshot_*.py
+
+snapshot-test-integration: export BISFIN_RUN_DB_INTEGRATION := 1
+snapshot-test-integration: db-wait
+	$(UV_RUN) pytest -m integration tests/integration/test_snapshot_*.py
+
+snapshot-e2e-fixture: export BISFIN_RUN_DB_INTEGRATION := 1
+snapshot-e2e-fixture: db-wait
+	$(UV_RUN) pytest -m integration tests/integration/test_snapshot_e2e.py
+
+snapshot-build-fixture: db-wait
+	$(MAKE) catalog-bootstrap-fixture
+	$(MAKE) calendar-import-fixture
+	$(MAKE) brsapi-ingest-fixture
+	$(BASH) scripts/db/build_snapshot_fixture.sh
+
+snapshot-verify-fixture: db-wait
+	$(UV_RUN) bisfin snapshot verify --code fixture-daily-raw-2026-01 --against-db
 
 db-up:
 	$(COMPOSE) up -d postgres

@@ -493,6 +493,45 @@ bar_revision = Table(
 )
 
 
+data_snapshot = Table(
+    "data_snapshot",
+    metadata,
+    Column("data_snapshot_id", BigInteger, Identity(always=True), primary_key=True, nullable=False),
+    Column("snapshot_code", VARCHAR(128), nullable=False, unique=True),
+    Column("knowledge_cutoff_ts", TIMESTAMP(timezone=True, precision=6), nullable=False),
+    Column("availability_mode", VARCHAR(24), nullable=False),
+    Column("manifest_sha256", CHAR(64), nullable=True),
+    Column("status", VARCHAR(16), nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True, precision=6), nullable=False),
+    Column("frozen_at", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("metadata", JSONB, nullable=False),
+    schema="catalog",
+)
+
+
+data_snapshot_component = Table(
+    "data_snapshot_component",
+    metadata,
+    Column(
+        "data_snapshot_id",
+        BigInteger,
+        ForeignKey("catalog.data_snapshot.data_snapshot_id"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("component_key", VARCHAR(160), primary_key=True, nullable=False),
+    Column("feed_id", BigInteger, ForeignKey("catalog.data_feed.feed_id"), nullable=True),
+    Column("event_from", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("event_to", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("max_available_at", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("max_system_available_at", TIMESTAMP(timezone=True, precision=6), nullable=True),
+    Column("row_count", BigInteger, nullable=True),
+    Column("component_sha256", CHAR(64), nullable=False),
+    Column("storage_uri", Text, nullable=True),
+    schema="catalog",
+)
+
+
 MAPPED_TABLES = (
     currency,
     asset_type,
@@ -508,6 +547,8 @@ MAPPED_TABLES = (
     raw_event,
     bar_series,
     bar_revision,
+    data_snapshot,
+    data_snapshot_component,
 )
 
 __all__ = [
@@ -517,6 +558,8 @@ __all__ = [
     "bar_revision",
     "bar_series",
     "data_feed",
+    "data_snapshot",
+    "data_snapshot_component",
     "data_provider",
     "currency",
     "ingestion_batch",

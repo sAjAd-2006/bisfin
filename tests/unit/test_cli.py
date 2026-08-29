@@ -270,3 +270,28 @@ def test_live_ingestion_requires_api_key_before_engine_creation() -> None:
 
     with pytest.raises(BrsApiConfigurationError, match="required for live mode"):
         _run_brsapi_daily_ingestion(arguments, settings)
+
+
+def test_snapshot_validate_is_database_independent_and_reports_hashes(tmp_path: Path) -> None:
+    manifest = tmp_path / "snapshot.json"
+    manifest.write_text(
+        """
+        {"schema_version":1,"snapshot_code":"cli-snapshot","knowledge_cutoff_ts":"2026-01-02T00:00:00Z","availability_mode":"PUBLIC_REPLAY","components":[{"component_key":"daily","kind":"BAR_REVISION","bar_series_id":1,"event_from":"2026-01-01T00:00:00Z","event_to":"2026-01-02T00:00:00Z","allow_empty":true}]}
+        """,
+        encoding="utf-8",
+    )
+    stdout = StringIO()
+    stderr = StringIO()
+
+    code = run(
+        ["snapshot", "validate", "--manifest", str(manifest)],
+        settings_factory=_settings,
+        engine_factory=lambda _settings: pytest.fail("validate must not create an engine"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert code == 0
+    assert "snapshot: valid" in stdout.getvalue()
+    assert "source_manifest_sha256=" in stdout.getvalue()
+    assert stderr.getvalue() == ""

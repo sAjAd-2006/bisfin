@@ -26,6 +26,8 @@ def test_only_required_physical_tables_are_mapped() -> None:
         "catalog.instrument",
         "catalog.instrument_identifier",
         "catalog.instrument_spec_version",
+        "catalog.data_snapshot",
+        "catalog.data_snapshot_component",
         "ingest.ingestion_batch",
         "ingest.raw_event",
         "market.bar_series",
