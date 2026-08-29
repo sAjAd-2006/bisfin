@@ -86,7 +86,12 @@ def test_fixture_bootstrap_removes_pr05_manual_catalog_seed(
                     "ON revision.bar_series_id = series.bar_series_id "
                     "WHERE series.feed_id = (SELECT feed_id FROM catalog.data_feed "
                     "WHERE feed_code = 'TSETMC_CANDLE_DAILY_RAW') "
-                    "AND revision.trading_date = DATE '2025-02-18'"
+                    "AND series.instrument_id = (SELECT instrument_id "
+                    "FROM catalog.instrument_identifier "
+                    "WHERE identifier_value = 'IRO1MSMI0001' "
+                    "ORDER BY valid_from DESC LIMIT 1) "
+                    "AND revision.trading_date = DATE '2025-02-18' "
+                    "AND revision.revision_no = 1"
                 )
             )
             .mappings()

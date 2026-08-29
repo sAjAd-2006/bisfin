@@ -7,9 +7,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import text
 from sqlalchemy.engine import Engine
 from tests.fixtures import unique_code
+from tests.integration.snapshot_support import SnapshotSeries, insert_revision, seed_snapshot_series
 
 from bisfin.calendar import load_calendar_manifest, validate_calendar_manifest
 from bisfin.calendar.importer import TradingCalendarImportService
@@ -59,7 +59,7 @@ def _manifest(
 
 def _bootstrap_and_add_correction(
     engine: Engine, settings: Settings
-) -> tuple[int, datetime, datetime]:
+) -> tuple[SnapshotSeries, datetime, datetime]:
     """Create canonical prerequisites through their public fixture workflows."""
 
     factory = create_unit_of_work_factory(engine)
@@ -82,110 +82,75 @@ def _bootstrap_and_add_correction(
     ).ingest(symbol="فملی", request_id=f"snapshot-daily-{uuid4()}")
     assert daily.status is IngestionBatchStatus.SUCCEEDED
 
-    with engine.begin() as connection:
-        source = (
-            connection.execute(
-                text(
-                    """
-                SELECT revision.*, series.bar_series_id
-                FROM market.bar_revision AS revision
-                JOIN market.bar_series AS series
-                  ON series.bar_series_id = revision.bar_series_id
-                JOIN catalog.data_feed AS feed ON feed.feed_id = series.feed_id
-                WHERE feed.feed_code = 'TSETMC_CANDLE_DAILY_RAW'
-                ORDER BY revision.bar_open_ts
-                LIMIT 1
-                """
-                )
-            )
-            .mappings()
-            .one()
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO market.bar_revision (
-                    bar_open_ts, bar_series_id, revision_no, available_at,
-                    system_available_at, bar_close_ts, trading_date, open_price,
-                    high_price, low_price, close_price, volume, is_final,
-                    quality_flags, ingestion_batch_id, recorded_at
-                ) VALUES (
-                    :bar_open_ts, :bar_series_id, 2, '2029-01-01T00:00:00Z',
-                    '2031-01-01T00:00:00Z', :bar_close_ts, :trading_date,
-                    :open_price, :high_price, :low_price, :close_price + 1,
-                    :volume, TRUE, 0, :ingestion_batch_id, '2029-01-01T00:00:00Z'
-                )
-                """
-            ),
-            dict(source),
-        )
-    return (
-        int(source["bar_series_id"]),
-        source["bar_open_ts"],
-        source["bar_close_ts"],
+    # The bootstrap/ingestion flow proves prerequisites. Snapshot rows themselves
+    # are then test-owned so earlier integration tests cannot influence selection.
+    series = seed_snapshot_series(engine)
+    event_from = datetime(2029, 1, 1, tzinfo=UTC)
+    event_to = datetime(2029, 1, 2, tzinfo=UTC)
+    insert_revision(
+        engine,
+        series,
+        bar_open_ts=event_from,
+        revision_no=1,
+        available_at=datetime(2029, 1, 2, tzinfo=UTC),
     )
+    insert_revision(
+        engine,
+        series,
+        bar_open_ts=event_from,
+        revision_no=2,
+        available_at=datetime(2029, 1, 4, tzinfo=UTC),
+        system_available_at=datetime(2031, 1, 1, tzinfo=UTC),
+        close_price=11,
+    )
+    return series, event_from, event_to
 
 
 def test_snapshot_build_verify_replay_modes_and_database_drift(
-    db_engine: Engine, db_settings: Settings, tmp_path: Path
+    db_engine: Engine, db_settings: Settings, snapshot_artifact_dir: Path
 ) -> None:
-    series_id, event_from, event_to = _bootstrap_and_add_correction(db_engine, db_settings)
-    public_code = unique_code("SNAP_PUBLIC", max_length=128)
-    actual_code = unique_code("SNAP_ACTUAL", max_length=128)
+    series, event_from, event_to = _bootstrap_and_add_correction(db_engine, db_settings)
+    public_code = unique_code("SNAP_PUBLIC")
+    actual_code = unique_code("SNAP_ACTUAL")
     public_document = parse_snapshot_manifest_bytes(
-        _manifest(public_code, series_id, event_from, event_to, "PUBLIC_REPLAY")
+        _manifest(public_code, series.bar_series_id, event_from, event_to, "PUBLIC_REPLAY")
     )
     builder = SnapshotBuilder(db_engine)
-    public = builder.build(public_document, output_dir=tmp_path)
+    public = builder.build(public_document, output_dir=snapshot_artifact_dir)
     actual = builder.build(
         parse_snapshot_manifest_bytes(
-            _manifest(actual_code, series_id, event_from, event_to, "ACTUAL_SYSTEM_REPLAY")
+            _manifest(
+                actual_code,
+                series.bar_series_id,
+                event_from,
+                event_to,
+                "ACTUAL_SYSTEM_REPLAY",
+            )
         ),
-        output_dir=tmp_path,
+        output_dir=snapshot_artifact_dir,
     )
 
     assert public.components[0].row_count == 2
     assert actual.components[0].row_count == 1
-    assert builder.build(public_document, output_dir=tmp_path).idempotent_replay
+    assert builder.build(public_document, output_dir=snapshot_artifact_dir).idempotent_replay
     assert SnapshotVerifier(db_engine).verify(public_code, against_db=True).verified
 
-    with db_engine.begin() as connection:
-        source = (
-            connection.execute(
-                text(
-                    """
-                SELECT * FROM market.bar_revision
-                WHERE bar_series_id = :series_id AND revision_no = 2
-                """
-                ),
-                {"series_id": series_id},
-            )
-            .mappings()
-            .one()
-        )
-        connection.execute(
-            text(
-                """
-                INSERT INTO market.bar_revision (
-                    bar_open_ts, bar_series_id, revision_no, available_at,
-                    system_available_at, bar_close_ts, trading_date, open_price,
-                    high_price, low_price, close_price, volume, is_final,
-                    quality_flags, ingestion_batch_id, recorded_at
-                ) VALUES (
-                    :bar_open_ts, :bar_series_id, 4, '2029-02-01T00:00:00Z',
-                    '2029-02-01T00:00:00Z', :bar_close_ts, :trading_date,
-                    :open_price, :high_price, :low_price, :close_price + 1,
-                    :volume, TRUE, 0, :ingestion_batch_id, '2029-02-01T00:00:00Z'
-                )
-                """
-            ),
-            dict(source),
-        )
+    # Add a previously eligible revision to the exact E2E series; no global SQL lookup.
+    insert_revision(
+        db_engine,
+        series,
+        bar_open_ts=event_from,
+        revision_no=3,
+        available_at=datetime(2029, 2, 1, tzinfo=UTC),
+        close_price=12,
+    )
     verified = SnapshotVerifier(db_engine).verify(public_code, against_db=True)
     assert verified.artifact_verified
     assert verified.database_drift
 
-    component_path = tmp_path / actual_code / actual.components[0].relative_storage_path
+    component_path = (
+        snapshot_artifact_dir / actual_code / actual.components[0].relative_storage_path
+    )
     component_path.write_bytes(component_path.read_bytes() + b'{"tampered":true}\n')
     tampered = SnapshotVerifier(db_engine).verify(actual_code)
     assert not tampered.artifact_verified

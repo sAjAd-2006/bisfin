@@ -4,12 +4,22 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import pytest
 from sqlalchemy import Connection, Engine
 
 from bisfin.config import Settings
 from bisfin.db.engine import create_engine, dispose_engine
+
+
+@pytest.fixture
+def snapshot_artifact_dir() -> Iterator[Path]:
+    """Provide a short, disposable artifact root across Snapshot tests."""
+
+    with TemporaryDirectory(prefix="bisfin-snapshot-") as directory:
+        yield Path(directory)
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

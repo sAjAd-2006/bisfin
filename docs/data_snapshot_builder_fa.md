@@ -14,6 +14,16 @@
 
 publication ابتدا در staging و سپس با rename اتمیک انجام می‌شود. URI محلی `file://` فقط برای development/CI تک‌نود مناسب است؛ برای بازتولید میان ماشین‌ها artifact باید همراه DB کپی شود. migration به object storage در آینده می‌تواند پشت همین artifact boundary انجام شود.
 
+## شکست، lifecycle و idempotency
+
+manifest نامعتبرِ static (کد ناامن، بازهٔ نامعتبر یا component تکراری) پیش از ساخت `BUILDING` رد می‌شود و هیچ row یا artifact ایجاد نمی‌کند. خطای runtime مانند series ناشناخته یا component خالی با `allow_empty=false` پس از ایجاد row، آن را به `FAILED` می‌رساند؛ `manifest_sha256` ثبت نمی‌شود و component کاذب باقی نمی‌ماند.
+
+خطای نوشتن artifact staging را پاک می‌کند و هرگز `FROZEN` نمی‌سازد. اگر publish اتمیک موفق باشد اما finalization DB شکست بخورد، evidence منتشرشده حذف نمی‌شود، ولی row به `FAILED` می‌رسد و artifact به‌عنوان snapshot منجمد ثبت نشده است. `allow_empty=true` مجاز است و JSONL خالی با hash قطعی می‌سازد.
+
+کد `FROZEN` فقط با همان semantic specification idempotent است: همان row/component/hash بازگردانده می‌شود و artifact بازنویسی نمی‌شود. specification متفاوت، و همچنین کدهای `BUILDING`، `FAILED` و `DEPRECATED`، conflict هستند و reactivation پنهان ندارند. component hash هویت محتوای داده است؛ manifest hash به‌دلیل شامل‌بودن `snapshot_code` می‌تواند برای دو snapshot با component یکسان متفاوت باشد.
+
+برای series تعدیل‌شده، `adjustment_set.knowledge_cutoff_ts` باید از cutoff snapshot جلوتر نباشد. افزون بر قید DB که final revision را پیش از `bar_close_ts` قابل‌دسترسی نمی‌گذارد، query Snapshot نیز صریحاً `bar_close_ts <= cutoff` را اعمال می‌کند. تمام componentها داخل یک transaction واقعی `REPEATABLE READ, READ ONLY` enumerate می‌شوند؛ بنابراین تغییر concurrent پس از شروع خوانش در component بعدی دیده نمی‌شود.
+
 ## CLI
 
 ```bash

@@ -163,7 +163,7 @@ jobs:
       - name: Reset the database and repeat migrations and tests
         run: make db-reset
 
-      - name: Verify the reset database, application health, and PIT integration
+      - name: Verify reset snapshot acceptance and application health
         env:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: |
@@ -175,7 +175,11 @@ jobs:
           make python-test-integration
           make brsapi-test-integration
           make bootstrap-e2e-fixture
+          make snapshot-test-integration
+          make snapshot-e2e-fixture
           uv run --frozen pytest -m integration tests/integration/test_brsapi_ingestion.py::test_cli_fixture_mode_end_to_end
+          make app-db-health
+          make app-db-current
 
       - name: Show PostgreSQL logs on failure
         if: failure()

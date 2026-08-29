@@ -1,16 +1,15 @@
 {
   "schema_version": 1,
-  "snapshot_code": "fixture-daily-raw-2026-01",
-  "knowledge_cutoff_ts": "2035-01-01T00:00:00Z",
+  "snapshot_code": "../unsafe",
+  "knowledge_cutoff_ts": "2026-01-02T00:00:00Z",
   "availability_mode": "PUBLIC_REPLAY",
   "components": [
     {
-      "component_key": "daily-raw",
+      "component_key": "daily",
       "kind": "BAR_REVISION",
       "bar_series_id": 999999999,
       "event_from": "2026-01-01T00:00:00Z",
-      "event_to": "2026-01-02T00:00:00Z",
-      "allow_empty": true
+      "event_to": "2026-01-02T00:00:00Z"
     }
   ]
 }

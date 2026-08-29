@@ -71,6 +71,8 @@ def test_core_mappings_match_live_columns_nullability_types_and_primary_keys(
         "ingest.raw_event",
         "market.bar_series",
         "market.bar_revision",
+        "catalog.data_snapshot",
+        "catalog.data_snapshot_component",
     }
 
     for table in MAPPED_TABLES:

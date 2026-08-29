@@ -22,7 +22,13 @@ snapshot-test:
 
 snapshot-test-integration: export BISFIN_RUN_DB_INTEGRATION := 1
 snapshot-test-integration: db-wait
-	$(UV_RUN) pytest -m integration tests/integration/test_snapshot_*.py
+	$(UV_RUN) pytest -m integration \
+		tests/integration/test_snapshot_repository.py \
+		tests/integration/test_snapshot_eligibility.py \
+		tests/integration/test_snapshot_lifecycle.py \
+		tests/integration/test_snapshot_idempotency.py \
+		tests/integration/test_snapshot_consistent_read.py \
+		tests/integration/test_snapshot_cli.py
 
 snapshot-e2e-fixture: export BISFIN_RUN_DB_INTEGRATION := 1
 snapshot-e2e-fixture: db-wait
