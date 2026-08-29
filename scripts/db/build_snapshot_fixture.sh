@@ -20,8 +20,8 @@ read -r series_id event_from event_to < <(
       --dbname="${POSTGRES_DB:?POSTGRES_DB is required}" \
       --command="
         SELECT series.bar_series_id,
-               to_char(min(revision.bar_open_ts), '\''YYYY-MM-DD\"T\"HH24:MI:SSOF'\''),
-               to_char(max(revision.bar_close_ts) + interval '\''1 microsecond'\'', '\''YYYY-MM-DD\"T\"HH24:MI:SSOF'\'')
+               to_char(min(revision.bar_open_ts), '\''YYYY-MM-DD\"T\"HH24:MI:SSTZH:TZM'\''),
+               to_char(max(revision.bar_close_ts) + interval '\''1 microsecond'\'', '\''YYYY-MM-DD\"T\"HH24:MI:SSTZH:TZM'\'')
         FROM market.bar_series AS series
         JOIN catalog.data_feed AS feed ON feed.feed_id = series.feed_id
         JOIN market.bar_revision AS revision ON revision.bar_series_id = series.bar_series_id
