@@ -3,6 +3,8 @@
 from sqlalchemy.engine import Engine
 
 from bisfin.db.unit_of_work import SqlAlchemyUnitOfWorkFactory
+from bisfin.repositories.backtest_ledger_repository import SqlAlchemyBacktestLedgerRepository
+from bisfin.repositories.backtest_run_repository import SqlAlchemyBacktestRunRepository
 from bisfin.repositories.bar_repository import SqlAlchemyBarRepository
 from bisfin.repositories.bar_writer_repository import SqlAlchemyBarWriterRepository
 from bisfin.repositories.catalog_writer_repository import SqlAlchemyCatalogWriterRepository
@@ -59,6 +61,8 @@ __all__ = [
     "RawEventRepository",
     "SqlAlchemyBarRepository",
     "SqlAlchemyBarWriterRepository",
+    "SqlAlchemyBacktestLedgerRepository",
+    "SqlAlchemyBacktestRunRepository",
     "SqlAlchemyCatalogWriterRepository",
     "SqlAlchemyDataFeedRepository",
     "SqlAlchemyIngestionBatchRepository",

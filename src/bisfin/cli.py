@@ -12,6 +12,8 @@ from typing import Protocol, TextIO
 from pydantic import ValidationError
 from sqlalchemy.engine import Engine
 
+from bisfin.backtest.manifest import load_backtest_manifest
+from bisfin.backtest.service import BacktestRunResult, ReferenceBacktestService
 from bisfin.calendar import load_calendar_manifest, validate_calendar_manifest
 from bisfin.calendar.importer import TradingCalendarImportService
 from bisfin.calendar.results import CalendarImportResult
@@ -39,6 +41,7 @@ from bisfin.repositories import create_unit_of_work_factory
 from bisfin.snapshots.builder import SnapshotBuilder
 from bisfin.snapshots.contracts import SnapshotBuildResult, SnapshotVerificationResult
 from bisfin.snapshots.manifest import load_snapshot_manifest
+from bisfin.snapshots.serialization import canonicalize_json
 from bisfin.snapshots.verifier import SnapshotVerifier
 
 SettingsFactory = Callable[[], Settings]
@@ -132,6 +135,23 @@ def build_parser() -> argparse.ArgumentParser:
     snapshot_verify.add_argument("--code", required=True)
     snapshot_verify.add_argument("--against-db", action="store_true")
     snapshot_verify.add_argument("--output-format", choices=("human", "json"), default="human")
+    backtest = subcommands.add_parser(
+        "backtest", help="validate, run, or show an artifact-backed reference backtest"
+    )
+    backtest_commands = backtest.add_subparsers(dest="backtest_command", required=True)
+    backtest_validate = backtest_commands.add_parser(
+        "validate", help="strictly validate a reference-backtest manifest"
+    )
+    backtest_validate.add_argument("--manifest", type=Path, required=True)
+    backtest_validate.add_argument("--output-format", choices=("human", "json"), default="human")
+    backtest_run = backtest_commands.add_parser(
+        "run", help="run one frozen artifact-backed backtest"
+    )
+    backtest_run.add_argument("--manifest", type=Path, required=True)
+    backtest_run.add_argument("--output-format", choices=("human", "json"), default="human")
+    backtest_show = backtest_commands.add_parser("show", help="show one reference backtest")
+    backtest_show.add_argument("--code", required=True)
+    backtest_show.add_argument("--output-format", choices=("human", "json"), default="human")
     return parser
 
 
@@ -182,6 +202,58 @@ def run(
             },
             output_format="human",
             prefix="snapshot: valid",
+            stdout=stdout,
+        )
+        return 0
+
+    if arguments.command == "backtest" and arguments.backtest_command == "validate":
+        try:
+            backtest_document = load_backtest_manifest(arguments.manifest)
+        except (OSError, ValueError, BisfinError) as error:
+            print(f"backtest: invalid ({redact_secrets(error)})", file=stderr)
+            return 2
+        _print_json_or_human(
+            {
+                "run_code": backtest_document.request.run_code,
+                "run_spec_sha256": backtest_document.run_spec_sha256,
+                "parameter_sha256": backtest_document.parameter_sha256,
+            },
+            output_format=arguments.output_format,
+            prefix="backtest: valid",
+            stdout=stdout,
+        )
+        return 0
+
+    if arguments.command == "backtest":
+        backtest_engine: Engine | None = None
+        try:
+            backtest_engine = engine_factory(settings)
+            service = ReferenceBacktestService(backtest_engine)
+            backtest_result: BacktestRunResult | dict[str, object]
+            if arguments.backtest_command == "run":
+                backtest_result = service.run(load_backtest_manifest(arguments.manifest))
+            elif arguments.backtest_command == "show":
+                stored = service.show(arguments.code)
+                if stored is None:
+                    raise ValueError("backtest run code was not found")
+                backtest_result = stored
+            else:
+                raise AssertionError("unhandled backtest command")
+        except (BisfinError, ValueError, OSError) as error:
+            print(f"backtest: failed ({redact_secrets(error)})", file=stderr)
+            return 4
+        finally:
+            if backtest_engine is not None:
+                dispose_engine(backtest_engine)
+        result_payload = (
+            backtest_result.model_dump(mode="json")
+            if isinstance(backtest_result, BacktestRunResult)
+            else backtest_result
+        )
+        _print_json_or_human(
+            result_payload,
+            output_format=arguments.output_format,
+            prefix="backtest: complete",
             stdout=stdout,
         )
         return 0
@@ -448,7 +520,12 @@ def _print_json_or_human(
 ) -> None:
     if output_format == "json":
         print(
-            json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True),
+            json.dumps(
+                canonicalize_json(value),
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
             file=stdout,
         )
         return

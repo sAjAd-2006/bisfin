@@ -15,7 +15,7 @@ BRSAPI_OUTPUT_FORMAT ?= human
 	calendar-test-integration calendar-validate-fixture calendar-import-fixture \
 	bootstrap-e2e-fixture app-config-check app-db-health app-db-current check \
 	snapshot-test snapshot-test-integration snapshot-e2e-fixture snapshot-build-fixture \
-	snapshot-verify-fixture
+	snapshot-verify-fixture backtest-test backtest-test-integration
 
 snapshot-test:
 	$(UV_RUN) pytest -m "not integration" tests/unit/test_snapshot_*.py
@@ -42,6 +42,13 @@ snapshot-build-fixture: db-wait
 
 snapshot-verify-fixture: db-wait
 	$(UV_RUN) bisfin snapshot verify --code fixture-daily-raw-2026-01 --against-db
+
+backtest-test:
+	$(UV_RUN) pytest -m "not integration" tests/unit -k backtest
+
+backtest-test-integration: export BISFIN_RUN_DB_INTEGRATION := 1
+backtest-test-integration: db-wait
+	$(UV_RUN) pytest -m integration tests/integration/test_backtest_reference_engine.py
 
 db-up:
 	$(COMPOSE) up -d postgres

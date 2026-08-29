@@ -70,6 +70,9 @@ jobs:
           make snapshot-test
           uv run --frozen bisfin snapshot validate --manifest tests/fixtures/snapshots/daily_raw_success.json
 
+      - name: Run reference backtest unit tests
+        run: make backtest-test
+
       - name: Validate Docker Compose configuration
         run: docker compose config --quiet
 
@@ -135,6 +138,11 @@ jobs:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make snapshot-e2e-fixture
 
+      - name: Run reference backtest PostgreSQL integration
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make backtest-test-integration
+
       - name: Build deterministic snapshot fixture
         run: make snapshot-build-fixture
 
@@ -184,6 +192,7 @@ jobs:
           make bootstrap-e2e-fixture
           make snapshot-test-integration
           make snapshot-e2e-fixture
+          make backtest-test-integration
           uv run --frozen pytest -m integration tests/integration/test_brsapi_ingestion.py::test_cli_fixture_mode_end_to_end
           make app-db-health
           make app-db-current

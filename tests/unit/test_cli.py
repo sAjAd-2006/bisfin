@@ -295,3 +295,28 @@ def test_snapshot_validate_is_database_independent_and_reports_hashes(tmp_path: 
     assert "snapshot: valid" in stdout.getvalue()
     assert "source_manifest_sha256=" in stdout.getvalue()
     assert stderr.getvalue() == ""
+
+
+def test_backtest_validate_is_database_independent_and_reports_hashes(tmp_path: Path) -> None:
+    manifest = tmp_path / "backtest.json"
+    manifest.write_text(
+        """
+        {"schema_version":1,"run_code":"cli-reference","snapshot_code":"frozen","universe_code":"REFERENCE","base_currency_code":"IRR","event_from":"2026-01-01T00:00:00Z","event_to":"2026-02-01T00:00:00Z","initial_capital":"1000","random_seed":1,"strategy":{"kind":"SMA_CROSS_LONG_FLAT_V1","parameters":{"fast_window":2,"slow_window":3,"target_quantity":"1"}},"execution_model":{"kind":"NEXT_BAR_CLOSE_AT_AVAILABILITY_V1"},"transaction_cost_model":{"commission_bps":"0","slippage_bps":"0","sell_tax_bps":"0"},"instruments":[{"instrument_id":1,"signal_component_key":"raw","execution_component_key":"raw","valuation_component_key":"raw","execution_lag_seconds":0}]}
+        """,
+        encoding="utf-8",
+    )
+    stdout = StringIO()
+    stderr = StringIO()
+
+    code = run(
+        ["backtest", "validate", "--manifest", str(manifest)],
+        settings_factory=_settings,
+        engine_factory=lambda _settings: pytest.fail("validate must not create an engine"),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert code == 0
+    assert "backtest: valid" in stdout.getvalue()
+    assert "run_spec_sha256=" in stdout.getvalue()
+    assert stderr.getvalue() == ""

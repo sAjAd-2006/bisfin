@@ -17,6 +17,8 @@ backtesting and point-in-time-correct research. The current scope includes:
   workflows that remove the manual prerequisite seed for fixture-backed PR-05;
 - database-independent unit tests and real PostgreSQL 16 integration tests.
 - immutable Point-in-Time bar-revision snapshot manifests and verifiable local artifacts.
+- a deterministic, artifact-backed, long-only reference backtest engine with
+  exact market-revision lineage and reproducible result hashes.
 
 This release does not ingest adjusted (`type=3`) or intraday (`type=1`) candles,
 auto-discover instruments/calendars, schedule jobs, run strategies, calculate
@@ -41,6 +43,7 @@ intentional and does not weaken the all-or-nothing guarantee for canonical rows.
 |-- docs/
 |   |-- brsapi_daily_bar_ingestion_fa.md
 |   |-- data_snapshot_builder_fa.md
+|   |-- reference_backtest_engine_fa.md
 |   |-- python_application_architecture_fa.md
 |   `-- trading_database_design_fa.md
 |-- scripts/db/                           # Database lifecycle/check scripts
@@ -205,6 +208,27 @@ offline RAW-bar fixture before creating the artifact. It never contacts BrsApi.
 For a full contract and drift-verification semantics, read the Persian
 [snapshot builder guide](docs/data_snapshot_builder_fa.md).
 
+## Deterministic reference backtests
+
+Reference backtests require a frozen PR-07 snapshot. Prices and revisions are
+read only from its immutable JSONL artifact; PostgreSQL records the run and
+enforces exact point-in-time lineage. The manifest explicitly lists the stable
+instrument set, so `universe_code` is experiment provenance rather than a
+historical-universe reconstruction.
+
+```bash
+uv run --frozen bisfin backtest validate --manifest run.json
+uv run --frozen bisfin backtest run --manifest run.json --output-format json
+uv run --frozen bisfin backtest show --code RUN_CODE --output-format json
+make backtest-test
+make backtest-test-integration
+```
+
+The v1 engine supports RAW bar snapshots, long/flat SMA targets, full market
+fills at the next eligible bar close, one base currency, and fixed Decimal
+basis-point costs. It deliberately excludes shorting, leverage, FX, partial
+fills and corporate actions. See the Persian [reference-engine guide](docs/reference_backtest_engine_fa.md).
+
 Catalog and calendar files are strict JSON contracts; their unknown fields and
 duplicate JSON keys are rejected. BrsApi Symbol is deliberately used only for a
 manifest-listed symbol, never as a bulk symbol-master endpoint. Read the Persian
@@ -297,6 +321,8 @@ The reset script refuses to delete `postgres`, `template0`, or `template1`.
 | `make snapshot-e2e-fixture` | Exercise the fixture-backed snapshot E2E path. |
 | `make snapshot-build-fixture` | Bootstrap/ingest fixtures and build an artifact. |
 | `make snapshot-verify-fixture` | Verify the fixture artifact and live replay candidate. |
+| `make backtest-test` | Run deterministic reference-backtest unit tests. |
+| `make backtest-test-integration` | Run the reference engine against PostgreSQL. |
 | `make check` | Run lint, format, unit, migration, and SQL checks. |
 
 ## Point-in-time and transaction rules
@@ -348,4 +374,5 @@ requests.
 See [the BrsApi ingestion guide](docs/brsapi_daily_bar_ingestion_fa.md),
 [the Python architecture guide](docs/python_application_architecture_fa.md),
 [the database design](docs/trading_database_design_fa.md), and
-[the SQL artifact guide](db/postgresql/README.md) for the detailed contracts.
+[the SQL artifact guide](db/postgresql/README.md), and the Persian
+[reference-engine guide](docs/reference_backtest_engine_fa.md) for the detailed contracts.
