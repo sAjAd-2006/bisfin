@@ -125,14 +125,21 @@ jobs:
           BISFIN_RUN_DB_INTEGRATION: "1"
         run: make calendar-test-integration
 
-      - name: Run snapshot PostgreSQL integration suite
+      - name: Run snapshot PostgreSQL integration tests
         env:
           BISFIN_RUN_DB_INTEGRATION: "1"
-        run: |
-          make snapshot-test-integration
-          make snapshot-e2e-fixture
-          make snapshot-build-fixture
-          make snapshot-verify-fixture
+        run: make snapshot-test-integration
+
+      - name: Run snapshot E2E fixture acceptance
+        env:
+          BISFIN_RUN_DB_INTEGRATION: "1"
+        run: make snapshot-e2e-fixture
+
+      - name: Build deterministic snapshot fixture
+        run: make snapshot-build-fixture
+
+      - name: Verify deterministic snapshot fixture
+        run: make snapshot-verify-fixture
 
       - name: Run deterministic catalog, calendar, and daily-bar fixture flow
         env:
